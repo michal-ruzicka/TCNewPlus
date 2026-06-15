@@ -30,6 +30,14 @@ First working release.
 - **Read-only by design** — no write entry points are exported, so TC
   disables delete/rename/upload inside the virtual file system; `F6`
   (move) is refused explicitly.
+- **Optional variable expansion inside file contents** (a TCNewPlus
+  extension beyond New+, which only substitutes in names). Off by default
+  and opt-in per file extension via `ExpandInFileExtensions` (e.g.
+  `.md,.txt`), so binary files are never touched. Content uses the same
+  variables as names but without filename-character sanitisation (a
+  `%USERPROFILE%` path keeps its `:`/`\`); listed files are treated as
+  UTF-8 (BOM preserved), and anything that is not valid UTF-8 is copied
+  verbatim.
 - **Icons.** The plugin shows an icon next to its name in Network
   Neighborhood (embedded icon resource), and every entry under
   `\\\TCNewPlus` shows the real template file's shell icon via

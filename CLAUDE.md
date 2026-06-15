@@ -95,6 +95,18 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   $DDD before $DD before $D). `$PARENT_FOLDER_NAME` must be checked before
   the date tokens. Environment variables are case-INsensitive; an
   undefined `%VAR%` stays verbatim (ExpandEnvironmentStrings semantics).
+- **Name substitution sanitises, content substitution does not.**
+  `ReplaceTemplateVariables(..., sanitizeInvalidChars)` replaces filename-
+  invalid chars (`\/:*?"<>|`) with spaces for names (New+ behaviour) but
+  must NOT for file contents (a `%USERPROFILE%` path keeps its `:`/`\`).
+  `MakeDisplayName` passes true; the in-content path (`CopyExpanded`)
+  passes false.
+- **In-content expansion is opt-in per extension** (`ExpandInFileExtensions`,
+  empty by default). `CopyExpanded` in `FsGetFileW` reads the file as UTF-8
+  (BOM preserved), expands with copy-time `GetLocalTime`, and writes UTF-8;
+  a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the raw
+  byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
+  TCNewPlus extension — New+ only substitutes in names.
 - **Empty-directory contract:** `FsFindFirstW` must return
   `INVALID_HANDLE_VALUE` with `SetLastError(ERROR_NO_MORE_FILES)` for an
   empty dir, and `ERROR_PATH_NOT_FOUND` for a missing one — TC

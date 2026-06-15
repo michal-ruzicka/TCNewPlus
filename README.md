@@ -25,6 +25,13 @@ project folder structures. Templates are ordinary files in an ordinary
 folder — the same folder PowerToys New+ uses, if you want to share one
 collection between Explorer's context menu and Total Commander.
 
+> **Beyond New+:** as an optional extension that PowerToys New+ does not
+> offer, TCNewPlus can also substitute variables *inside file contents*
+> (not just in names) for chosen file extensions — see
+> [Variable Expansion Inside File Contents](#variable-expansion-inside-file-contents).
+> It is off by default, so the plugin stays a faithful New+ equivalent
+> until you opt in.
+
 **Project page:** <https://github.com/michal-ruzicka/TCNewPlus> — source
 code, releases and issue tracker.
 
@@ -212,8 +219,9 @@ in any value.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
-| `ReplaceVariables` | `1` | Substitute the variables described above |
+| `ReplaceVariables` | `1` | Substitute the variables described above in names |
 | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
+| `ExpandInFileExtensions` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
 
 The default templates folder is always the `Templates` folder next to the
 plugin DLL, even when the per-user INI is in effect — that is where the
@@ -227,6 +235,39 @@ the New+ templates folder:
 [TCNewPlus]
 TemplatesPath=%LocalAppData%\Microsoft\PowerToys\NewPlus\Templates
 ```
+
+#### Variable Expansion Inside File Contents
+
+> **Extension beyond PowerToys New+.** This feature does **not** exist
+> in PowerToys New+, which only substitutes variables in *filenames*.
+> In-content expansion is a TCNewPlus-only addition; templates that rely on
+> it will not behave the same way in the New+ Explorer menu.
+
+TCNewPlus can additionally expand the same variables *inside the file
+contents* when a template is copied out — so a Markdown template can fill
+in today's date, the user name, or the project folder name in its body.
+
+Because expanding variables inside a binary file would corrupt it, this is
+**off by default** and opt-in **per file extension** — the plugin never
+tries to guess whether a file is text. List the extensions to expand in
+`ExpandInFileExtensions`:
+
+```ini
+[TCNewPlus]
+ExpandInFileExtensions=.md,.txt
+```
+
+With the above, copying a `.md` or `.txt` template runs its contents
+through the same substitution as the names — except that characters
+invalid in filenames are **not** replaced with spaces inside content (a
+path from `%USERPROFILE%` keeps its `:` and `\`). `$PARENT_FOLDER_NAME`
+expands to the name of the containing template subfolder; the date and
+time are taken at copy time. Files of any other extension are copied byte
+for byte.
+
+Listed files are assumed to be **UTF-8** (a leading byte-order mark is
+preserved). A file that turns out not to be valid UTF-8 is copied verbatim
+rather than risk corrupting it.
 
 ### Differences from PowerToys New+
 
@@ -249,6 +290,10 @@ file-system-plugin model, which leads to a few deliberate differences:
 - **Variable replacement defaults to on.** New+ ships with *Replace
   variables in template filename* disabled; this plugin enables it by
   default (set `ReplaceVariables=0` for verbatim names).
+- **Optional variable expansion inside file contents.** New+ only
+  substitutes variables in filenames; this plugin can also expand them in
+  the file body for chosen extensions (off by default — see
+  [Variable Expansion Inside File Contents](#variable-expansion-inside-file-contents)).
 
 ### Troubleshooting
 

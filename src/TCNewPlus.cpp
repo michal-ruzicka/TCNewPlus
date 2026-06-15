@@ -33,6 +33,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
@@ -81,7 +82,52 @@ struct FindContext {
 struct Config {
     std::wstring templatesPath;
     NameRules    rules;
+    // Extensions (".md", ".txt", …) whose file contents should have New+
+    // variables expanded on copy. Empty by default — no in-content expansion.
+    std::set<std::wstring, CaseInsensitiveLess> expandExtensions;
 };
+
+// Splits a comma/semicolon-separated extension list into a set, trimming
+// whitespace and ensuring a leading dot on each entry ("md, .txt" ->
+// {".md", ".txt"}).
+static std::set<std::wstring, CaseInsensitiveLess> ParseExtensionList(const std::wstring& raw)
+{
+    std::set<std::wstring, CaseInsensitiveLess> out;
+    std::wstring token;
+
+    auto flush = [&]() {
+        size_t b = token.find_first_not_of(L" \t");
+        size_t e = token.find_last_not_of(L" \t");
+        if (b != std::wstring::npos) {
+            std::wstring t = token.substr(b, e - b + 1);
+            if (!t.empty()) {
+                if (t[0] != L'.')
+                    t.insert(t.begin(), L'.');
+                out.insert(t);
+            }
+        }
+        token.clear();
+    };
+
+    for (wchar_t c : raw) {
+        if (c == L',' || c == L';')
+            flush();
+        else
+            token += c;
+    }
+    flush();
+    return out;
+}
+
+// Returns the extension of a path, including the leading dot (".md"), or an
+// empty string when there is none.
+static std::wstring FileExtension(const std::wstring& path)
+{
+    size_t slash = path.find_last_of(L"\\/");
+    std::wstring leaf = (slash == std::wstring::npos) ? path : path.substr(slash + 1);
+    size_t dot = leaf.find_last_of(L'.');
+    return (dot == std::wstring::npos) ? std::wstring() : leaf.substr(dot);
+}
 
 static std::wstring PluginDirectory()
 {
@@ -136,6 +182,11 @@ static Config LoadConfig()
         GetPrivateProfileIntW(L"TCNewPlus", L"ReplaceVariables", 1, ini.c_str()) != 0;
     cfg.rules.hideStartingDigits =
         GetPrivateProfileIntW(L"TCNewPlus", L"HideStartingDigits", 1, ini.c_str()) != 0;
+
+    wchar_t exts[2048] = L"";
+    GetPrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", L"",
+                             exts, ARRAYSIZE(exts), ini.c_str());
+    cfg.expandExtensions = ParseExtensionList(exts);
 
     return cfg;
 }
@@ -354,6 +405,101 @@ int __stdcall FsFindClose(HANDLE Hdl)
     return 0;
 }
 
+// Sentinel returned by CopyExpanded when the source is not valid UTF-8, so
+// the caller falls back to a verbatim byte copy rather than risk corrupting
+// the file.
+static const int FS_RAW_FALLBACK = -1;
+
+static void StampNow(HANDLE hFile)
+{
+    // "New document" semantics: the copy is a brand-new file created now, not
+    // a clone of the template's timestamps.
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    SetFileTime(hFile, &now, &now, &now);
+}
+
+// Copies `realPath` to `localName` while expanding New+ variables in its
+// (UTF-8) text content. A leading UTF-8 byte-order mark is preserved.
+// Variables are expanded WITHOUT filename sanitisation — characters like
+// ':' or '\' from %USERPROFILE% stay intact in the content. Returns an
+// FS_FILE_* code, or FS_RAW_FALLBACK when the content is not valid UTF-8.
+static int CopyExpanded(const std::wstring& realPath,
+                        const std::wstring& localName,
+                        const std::wstring& parentName)
+{
+    HANDLE hSrc = CreateFileW(realPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hSrc == INVALID_HANDLE_VALUE)
+        return FS_FILE_NOTFOUND;
+
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(hSrc, &size);
+    std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+    bool readOk = bytes.empty();
+    if (!bytes.empty()) {
+        DWORD got = 0;
+        readOk = ReadFile(hSrc, &bytes[0], static_cast<DWORD>(bytes.size()),
+                          &got, nullptr) && got == bytes.size();
+    }
+    CloseHandle(hSrc);
+    if (!readOk)
+        return FS_FILE_READERROR;
+
+    const char* kBom = "\xEF\xBB\xBF";
+    bool hasBom = bytes.size() >= 3 && memcmp(bytes.data(), kBom, 3) == 0;
+    const char* textPtr = bytes.data() + (hasBom ? 3 : 0);
+    int textLen = static_cast<int>(bytes.size() - (hasBom ? 3 : 0));
+
+    std::wstring wide;
+    if (textLen > 0) {
+        int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                       textPtr, textLen, nullptr, 0);
+        if (wlen <= 0)
+            return FS_RAW_FALLBACK; // not valid UTF-8 — let the caller copy raw
+        wide.resize(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, textPtr, textLen, &wide[0], wlen);
+    }
+
+    SYSTEMTIME now;
+    GetLocalTime(&now);
+    std::wstring expanded = ReplaceTemplateVariables(wide, now, parentName, false);
+
+    std::string out;
+    if (hasBom)
+        out.append(kBom, 3);
+    if (!expanded.empty()) {
+        int blen = WideCharToMultiByte(CP_UTF8, 0, expanded.data(),
+                                       static_cast<int>(expanded.size()),
+                                       nullptr, 0, nullptr, nullptr);
+        size_t base = out.size();
+        out.resize(base + blen);
+        WideCharToMultiByte(CP_UTF8, 0, expanded.data(),
+                            static_cast<int>(expanded.size()),
+                            &out[base], blen, nullptr, nullptr);
+    }
+
+    HANDLE hDst = CreateFileW(localName.c_str(), GENERIC_WRITE, 0, nullptr,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hDst == INVALID_HANDLE_VALUE)
+        return FS_FILE_WRITEERROR;
+
+    bool writeOk = out.empty();
+    if (!out.empty()) {
+        DWORD put = 0;
+        writeOk = WriteFile(hDst, out.data(), static_cast<DWORD>(out.size()),
+                            &put, nullptr) && put == out.size();
+    }
+    StampNow(hDst);
+    CloseHandle(hDst);
+
+    if (!writeOk) {
+        DeleteFileW(localName.c_str());
+        return FS_FILE_WRITEERROR;
+    }
+    return FS_FILE_OK;
+}
+
 int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
                          RemoteInfoStruct* /*ri*/)
 {
@@ -364,8 +510,9 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (CopyFlags & FS_COPYFLAGS_MOVE)
         return FS_FILE_NOTSUPPORTED;
 
+    const Config cfg = LoadConfig();
     const std::wstring vpath = NormalizeVirtualPath(RemoteName);
-    const std::wstring realPath = ResolveRealPath(vpath, LoadConfig());
+    const std::wstring realPath = ResolveRealPath(vpath, cfg);
     if (realPath.empty())
         return FS_FILE_NOTFOUND;
 
@@ -375,6 +522,22 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
 
     if (ProgressAborted(RemoteName, LocalName, 0))
         return FS_FILE_USERABORT;
+
+    // Expand New+ variables inside the content for configured extensions.
+    // $PARENT_FOLDER_NAME uses the (already substituted) display name of the
+    // immediate parent folder; empty at the plugin root.
+    if (cfg.expandExtensions.count(FileExtension(vpath))) {
+        const std::wstring parentDir = VirtualParent(vpath);
+        const std::wstring parentName =
+            (parentDir == L"\\") ? std::wstring() : VirtualLeaf(parentDir);
+        int r = CopyExpanded(realPath, LocalName, parentName);
+        if (r != FS_RAW_FALLBACK) {
+            if (r == FS_FILE_OK)
+                ProgressAborted(RemoteName, LocalName, 100);
+            return r;
+        }
+        // Not valid UTF-8 — fall through to a verbatim byte copy.
+    }
 
     HANDLE hSrc = CreateFileW(realPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -423,13 +586,8 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
         }
     }
 
-    if (result == FS_FILE_OK) {
-        // "New document" semantics: the copy is a brand-new file created
-        // now, not a clone of the template's timestamps.
-        FILETIME now;
-        GetSystemTimeAsFileTime(&now);
-        SetFileTime(hDst, &now, &now, &now);
-    }
+    if (result == FS_FILE_OK)
+        StampNow(hDst);
 
     CloseHandle(hSrc);
     CloseHandle(hDst);

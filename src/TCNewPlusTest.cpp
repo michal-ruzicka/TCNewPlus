@@ -146,6 +146,10 @@ static void TestSpecialAndEnvironmentVariables()
     SetEnvironmentVariableW(L"TCNP_TEST_INVALID", L"a<b>c:d");
     CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L""),
             L"a b c d", "invalid filename chars become spaces");
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", false),
+            L"a<b>c:d", "content mode keeps filename-invalid chars verbatim");
+    CheckEq(ReplaceTemplateVariables(L"$PARENT_FOLDER_NAME", st, L"a:b", false),
+            L"a:b", "content mode keeps invalid chars in $PARENT_FOLDER_NAME");
 
     CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_UNDEFINED% x", st, L""),
             L"%TCNP_TEST_UNDEFINED% x", "undefined variable stays verbatim");
@@ -269,8 +273,10 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     WriteTextFile(templates + L"\\2. Note $YYYY.txt", "note");
     WriteTextFile(templates + L"\\4. Same.txt", "first");
     WriteTextFile(templates + L"\\5. Same.txt", "second");
+    WriteTextFile(templates + L"\\6. Vars $YYYY.md",
+                  "Y=$YYYY U=%TCNP_TEST_CONTENT% P=$PARENT_FOLDER_NAME");
     WriteTextFile(templates + L"\\3. Proj $YYYY\\README of $PARENT_FOLDER_NAME.md",
-                  "readme");
+                  "P=$PARENT_FOLDER_NAME");
 
     // The plugin prefers a per-user INI in %APPDATA%\GHISLER over the one
     // next to the DLL. Move any real per-user INI aside for the duration of
@@ -329,9 +335,10 @@ static void RunEndToEndTests(const wchar_t* dllPath)
 
     // --- Root listing ------------------------------------------------------
     auto root = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
-    Check(root.size() == 5, "root lists five entries");
+    Check(root.size() == 6, "root lists six entries");
     Check(ContainsName(root, L"Plain.txt"), "prefix stripped from Plain.txt");
     Check(ContainsName(root, L"Note " + year + L".txt"), "$YYYY substituted");
+    Check(ContainsName(root, L"Vars " + year + L".md"), "expandable template listed");
     Check(ContainsName(root, L"Proj " + year, true), "folder template listed");
     Check(ContainsName(root, L"Same.txt"), "first colliding name kept");
     Check(ContainsName(root, L"Same (2).txt"), "second colliding name disambiguated");
@@ -368,7 +375,8 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     std::wstring subLocal  = outDir + L"\\README.md";
     rc = fsGetFileW(&subRemote[0], &subLocal[0], 0, nullptr);
     Check(rc == FS_FILE_OK, "FsGetFileW resolves a subfolder file");
-    Check(ReadTextFile(subLocal) == "readme", "subfolder content matches");
+    Check(ReadTextFile(subLocal) == "P=$PARENT_FOLDER_NAME",
+          "subfolder content copied verbatim when expansion is off");
 
     rc = fsGetFileW(&remote[0], &local[0],
                     FS_COPYFLAGS_MOVE | FS_COPYFLAGS_OVERWRITE, nullptr);
@@ -391,6 +399,37 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     iconRc = fsIconW(&missing[0], FS_ICONFLAG_SMALL, &icon);
     Check(iconRc == FS_ICON_USEDEFAULT,
           "FsExtractCustomIconW falls back to default for a missing template");
+
+    // --- In-content variable expansion (ExpandInFileExtensions) ------------
+    const std::string yearA = std::to_string(now.wYear);
+    SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"C:\\tmp\\x");
+    WritePrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", L".md",
+                               ini.c_str());
+
+    std::wstring varRemote = L"\\Vars " + year + L".md";
+    std::wstring varLocal  = outDir + L"\\Vars.md";
+    rc = fsGetFileW(&varRemote[0], &varLocal[0], 0, nullptr);
+    Check(rc == FS_FILE_OK, "FsGetFileW copies an expandable .md file");
+    Check(ReadTextFile(varLocal) ==
+              "Y=" + yearA + " U=C:\\tmp\\x P=$PARENT_FOLDER_NAME",
+          "content variables expanded without filename sanitisation");
+
+    std::wstring subLocal2 = outDir + L"\\README-expanded.md";
+    rc = fsGetFileW(&subRemote[0], &subLocal2[0], 0, nullptr);
+    Check(rc == FS_FILE_OK, "FsGetFileW copies an expandable subfolder .md file");
+    Check(ReadTextFile(subLocal2) == "P=Proj " + yearA,
+          "$PARENT_FOLDER_NAME expands inside subfolder content");
+
+    std::wstring noteRemote = L"\\Note " + year + L".txt";
+    std::wstring noteLocal  = outDir + L"\\Note.txt";
+    rc = fsGetFileW(&noteRemote[0], &noteLocal[0], 0, nullptr);
+    Check(rc == FS_FILE_OK && ReadTextFile(noteLocal) == "note",
+          ".txt copied verbatim when only .md expansion is enabled");
+
+    // Remove the key so later sections see the default (no expansion).
+    WritePrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", nullptr,
+                               ini.c_str());
+    SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over

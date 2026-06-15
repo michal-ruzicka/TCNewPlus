@@ -37,14 +37,20 @@ struct NameRules {
 // would consume the entire name, the original name is returned unchanged.
 std::wstring StripSortingPrefix(const std::wstring& name);
 
-// Replaces all New+ variables in `name` using the given local time snapshot.
+// Replaces all New+ variables in `text` using the given local time snapshot.
 // `parentFolderName` substitutes $PARENT_FOLDER_NAME; when it is empty (root
 // level — no template subfolder above), the token is left in place verbatim,
 // matching the New+ documentation ("only works in template subfolders").
-// Substituted values have filesystem-invalid characters replaced by spaces.
-std::wstring ReplaceTemplateVariables(const std::wstring& name,
+//
+// `sanitizeInvalidChars` controls whether substituted values have
+// filesystem-invalid characters (\ / : * ? " < > |) replaced by spaces.
+// Pass true when building a filename (the default, New+ behaviour); pass
+// false when expanding variables inside file contents, where those
+// characters are legitimate (e.g. a path from %USERPROFILE%).
+std::wstring ReplaceTemplateVariables(const std::wstring& text,
                                       const SYSTEMTIME&   localTime,
-                                      const std::wstring& parentFolderName);
+                                      const std::wstring& parentFolderName,
+                                      bool                sanitizeInvalidChars = true);
 
 // Full pipeline: optional prefix strip, optional variable replacement, and a
 // final trim of leading/trailing spaces and trailing dots (Windows filenames

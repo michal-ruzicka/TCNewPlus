@@ -101,9 +101,14 @@ std::wstring StripSortingPrefix(const std::wstring& name)
 
 std::wstring ReplaceTemplateVariables(const std::wstring& name,
                                       const SYSTEMTIME&   localTime,
-                                      const std::wstring& parentFolderName)
+                                      const std::wstring& parentFolderName,
+                                      bool                sanitizeInvalidChars)
 {
     static const std::wstring kParentToken = L"PARENT_FOLDER_NAME";
+
+    auto maybeSanitize = [sanitizeInvalidChars](const std::wstring& v) {
+        return sanitizeInvalidChars ? Sanitize(v) : v;
+    };
 
     std::wstring out;
     out.reserve(name.size() + 16);
@@ -119,7 +124,7 @@ std::wstring ReplaceTemplateVariables(const std::wstring& name,
             // also starts with characters a date token could match.
             if (tail.compare(0, kParentToken.size(), kParentToken) == 0) {
                 if (!parentFolderName.empty()) {
-                    out += Sanitize(parentFolderName);
+                    out += maybeSanitize(parentFolderName);
                 } else {
                     // Root level: New+ documents the variable as working
                     // "only in template subfolders" — keep the token.
@@ -133,7 +138,7 @@ std::wstring ReplaceTemplateVariables(const std::wstring& name,
             std::wstring value;
             size_t consumed = ResolveDateToken(tail, localTime, value);
             if (consumed > 0) {
-                out += Sanitize(value);
+                out += maybeSanitize(value);
                 i += 1 + consumed;
                 continue;
             }
@@ -156,7 +161,7 @@ std::wstring ReplaceTemplateVariables(const std::wstring& name,
                     DWORD written = GetEnvironmentVariableW(var.c_str(),
                                                             &value[0], needed);
                     value.resize(written);
-                    out += Sanitize(value);
+                    out += maybeSanitize(value);
                 } else {
                     out += name.substr(i, close - i + 1);
                 }
