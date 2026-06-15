@@ -189,18 +189,32 @@ Meeting Notes 2026-06-13 14.30 by michal.md
 
 ### Configuration
 
-Settings live in `TCNewPlus.ini` **next to the plugin DLL** in the plugin
-installation directory. The shipped file has every option commented out,
-so the defaults apply. The INI is re-read on every listing of the plugin
-root — edits take effect on the next refresh (**Ctrl+R**). Environment
-variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded in any
-value.
+Settings live in `TCNewPlus.ini`. The plugin reads it from two locations
+and uses the **first one that exists** — values are not merged across
+files:
+
+1. `%APPDATA%\GHISLER\TCNewPlus.ini` — per-user override
+2. `<plugin install dir>\TCNewPlus.ini` — system-wide default, shipped
+   with the plugin
+
+The shipped INI has every option commented out, so all defaults apply. To
+customise just for your user account, copy that file to
+`%APPDATA%\GHISLER\TCNewPlus.ini` and edit the copy; the system-wide file
+is then ignored entirely. The chosen file is re-read on every listing of
+the plugin root — edits take effect on the next refresh (**Ctrl+R**).
+Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
+in any value.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
 | `ReplaceVariables` | `1` | Substitute the variables described above |
 | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
+
+The default templates folder is always the `Templates` folder next to the
+plugin DLL, even when the per-user INI is in effect — that is where the
+bundled sample set physically lives. Set `TemplatesPath` to point
+elsewhere.
 
 To share one template collection with PowerToys New+, point the plugin at
 the New+ templates folder:
@@ -236,7 +250,9 @@ file-system-plugin model, which leads to a few deliberate differences:
 
 **The plugin panel is empty.** The templates folder does not exist or is
 empty. Check `TemplatesPath` in `TCNewPlus.ini` (the default is the
-`Templates` folder next to the plugin DLL) and refresh with `Ctrl+R`.
+`Templates` folder next to the plugin DLL) and refresh with `Ctrl+R`. If
+you have a `%APPDATA%\GHISLER\TCNewPlus.ini`, that file is used instead of
+the one shipped with the plugin — edit whichever one is in effect.
 
 **A copied file still contains `$YYYY` in its name.** Either
 `ReplaceVariables=0` is set in the INI, or the pattern is not one of the

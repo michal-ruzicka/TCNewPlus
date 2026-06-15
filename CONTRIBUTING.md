@@ -311,10 +311,13 @@ shows the virtual name, the real template path it maps to, and the active
 templates folder — the fastest way to see why a particular entry looks
 the way it does.
 
-**Config not taking effect?** `TCNewPlus.ini` is read from the directory
-containing the plugin DLL (check TC's *Configuration → Options → Plugins →
-File system plugins → Configure* for the installed path), and re-read on
-every root listing — `Ctrl+R` in the plugin panel applies edits.
+**Config not taking effect?** `TCNewPlus.ini` is looked up first at
+`%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override) and then next to the
+plugin DLL (check TC's *Configuration → Options → Plugins → File system
+plugins → Configure* for the installed path); the first file that exists
+wins entirely — keys are not merged. The chosen file is re-read on every
+root listing, so `Ctrl+R` in the plugin panel applies edits. A stale
+per-user INI silently shadowing the shipped one is the usual culprit.
 
 **Reproduce outside TC.** `TCNewPlusTest.exe <path-to-wfx>` exercises the
 full listing/copy pipeline against a temporary template tree without

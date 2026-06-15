@@ -96,11 +96,32 @@ static std::wstring ExpandEnvironment(const std::wstring& value)
     return (n > 0 && n <= ARRAYSIZE(buf)) ? std::wstring(buf) : value;
 }
 
+// Per-user configuration override, in Total Commander's own settings folder
+// (%APPDATA%\GHISLER). Empty when %APPDATA% is somehow undefined.
+static std::wstring UserConfigPath()
+{
+    wchar_t appdata[MAX_PATH] = L"";
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", appdata, ARRAYSIZE(appdata));
+    if (n == 0 || n >= ARRAYSIZE(appdata))
+        return std::wstring();
+    return std::wstring(appdata) + L"\\GHISLER\\TCNewPlus.ini";
+}
+
 static Config LoadConfig()
 {
     Config cfg;
     const std::wstring dir = PluginDirectory();
-    const std::wstring ini = dir + L"\\TCNewPlus.ini";
+
+    // Lookup order, mirroring TCOfficeView: the first file that exists is
+    // used in full — settings are NOT merged across the two.
+    //   1. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
+    //   2. <plugin install dir>\TCNewPlus.ini (system-wide; ships with the plugin)
+    const std::wstring userIni = UserConfigPath();
+    const std::wstring ini =
+        (!userIni.empty() &&
+         GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
+            ? userIni
+            : dir + L"\\TCNewPlus.ini";
 
     wchar_t value[4096] = L"";
     GetPrivateProfileStringW(L"TCNewPlus", L"TemplatesPath", L"",

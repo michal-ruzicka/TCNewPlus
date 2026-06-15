@@ -271,6 +271,24 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     WriteTextFile(templates + L"\\3. Proj $YYYY\\README of $PARENT_FOLDER_NAME.md",
                   "readme");
 
+    // The plugin prefers a per-user INI in %APPDATA%\GHISLER over the one
+    // next to the DLL. Move any real per-user INI aside for the duration of
+    // the test so this fixture's plugin-dir INI is the one that wins, then
+    // restore it afterwards. (On CI / a fresh machine there is none.)
+    std::wstring userIni;
+    {
+        wchar_t appdata[MAX_PATH] = L"";
+        if (GetEnvironmentVariableW(L"APPDATA", appdata, ARRAYSIZE(appdata)))
+            userIni = std::wstring(appdata) + L"\\GHISLER\\TCNewPlus.ini";
+    }
+    std::wstring userIniBak = userIni + L".tcnptest-bak";
+    bool userIniMoved = false;
+    if (!userIni.empty() &&
+        GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        userIniMoved = MoveFileExW(userIni.c_str(), userIniBak.c_str(),
+                                   MOVEFILE_REPLACE_EXISTING) != FALSE;
+    }
+
     // --- Point the plugin at the fixture via INI next to the DLL ----------
     std::wstring dllDir = dllPath;
     size_t slash = dllDir.find_last_of(L"\\/");
@@ -354,10 +372,42 @@ static void RunEndToEndTests(const wchar_t* dllPath)
                     FS_COPYFLAGS_MOVE | FS_COPYFLAGS_OVERWRITE, nullptr);
     Check(rc == FS_FILE_NOTSUPPORTED, "move (F6) is refused — read-only FS");
 
+    // --- Per-user INI precedence over the plugin-dir INI -------------------
+    // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over
+    // the INI next to the DLL. Point it at a different templates folder and
+    // confirm the plugin lists that one instead.
+    if (!userIni.empty()) {
+        std::wstring altTemplates = fixture + L"\\AltTemplates";
+        CreateDirectoryW(altTemplates.c_str(), nullptr);
+        WriteTextFile(altTemplates + L"\\Only In User Config.txt", "alt");
+
+        size_t ghSlash = userIni.find_last_of(L'\\');
+        std::wstring ghislerDir = userIni.substr(0, ghSlash);
+        bool createdGhisler = CreateDirectoryW(ghislerDir.c_str(), nullptr) != FALSE;
+
+        WritePrivateProfileStringW(L"TCNewPlus", L"TemplatesPath",
+                                   altTemplates.c_str(), userIni.c_str());
+
+        auto userListing =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(ContainsName(userListing, L"Only In User Config.txt"),
+              "per-user INI in %APPDATA%\\GHISLER takes precedence");
+        Check(!ContainsName(userListing, L"Plain.txt"),
+              "plugin-dir INI is ignored when the per-user INI exists");
+
+        DeleteFileW(userIni.c_str());
+        if (createdGhisler)
+            RemoveDirectoryW(ghislerDir.c_str()); // no-op if not empty
+    }
+
     FreeLibrary(dll);
 
     // --- Cleanup ------------------------------------------------------------
     DeleteFileW(ini.c_str());
+    if (!userIni.empty())
+        DeleteFileW(userIni.c_str()); // in case the precedence test left one
+    if (userIniMoved)
+        MoveFileExW(userIniBak.c_str(), userIni.c_str(), MOVEFILE_REPLACE_EXISTING);
     std::wstring rmCmd = L"cmd /c rmdir /s /q \"" + fixture + L"\"";
     _wsystem(rmCmd.c_str());
 }

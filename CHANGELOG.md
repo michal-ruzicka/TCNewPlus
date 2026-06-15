@@ -32,11 +32,13 @@ First working release.
   (move) is refused explicitly.
 - **`Alt+Enter` (Properties)** on a virtual entry shows the real template
   path on disk and the active templates folder.
-- **Configuration via `TCNewPlus.ini`** next to the plugin DLL
-  (`TemplatesPath`, `ReplaceVariables`, `HideStartingDigits`), re-read on
-  every root listing. Defaults to the bundled sample template set in the
-  `Templates` folder next to the DLL; can be pointed at the PowerToys
-  New+ templates folder to share one collection.
+- **Configuration via `TCNewPlus.ini`** (`TemplatesPath`,
+  `ReplaceVariables`, `HideStartingDigits`), re-read on every root listing.
+  Looked up first at `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override)
+  and then next to the plugin DLL — the first file that exists wins
+  entirely, mirroring TCOfficeView. Defaults to the bundled sample
+  template set in the `Templates` folder next to the DLL; can be pointed
+  at the PowerToys New+ templates folder to share one collection.
 - **Sample template set** bundled in the release ZIP.
 - **Test suite (`TCNewPlusTest.exe`)** — unit tests of the naming rules
   plus end-to-end tests driving the built DLL through the WFX API; run

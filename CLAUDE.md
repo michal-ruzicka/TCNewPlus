@@ -103,7 +103,11 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   system ANSI code page.
 - **Config is re-read on every root listing** (`LoadConfig()` in
   `FsFindFirstW`) — cheap by design; don't cache it globally or INI edits
-  stop applying on `Ctrl+R`.
+  stop applying on `Ctrl+R`. Lookup order mirrors TCOfficeView:
+  `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user) wins over
+  `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
+  per-key merge. The default `TemplatesPath` stays relative to the DLL
+  directory regardless of which INI wins (that's where the samples ship).
 
 ## Build prerequisites
 
