@@ -145,7 +145,7 @@ REM native line ending and ensures text files open correctly in any Windows
 REM editor. Uses [char] casts to avoid batch quoting issues with escape
 REM sequences.
 powershell -NoLogo -NoProfile -Command ^
-    "Get-ChildItem '%STAGE%' -Recurse -File | Where-Object { $_.Extension -in '.md','.inf','.ini','.txt','.sha256' } | ForEach-Object { $lf = [string][char]10; $cr = [string][char]13; $crlf = $cr + $lf; $t = [System.IO.File]::ReadAllText($_.FullName); [System.IO.File]::WriteAllText($_.FullName, $t.Replace($crlf, $lf).Replace($cr, $lf).Replace($lf, $crlf), [System.Text.UTF8Encoding]::new($false)) }"
+    "Get-ChildItem '%STAGE%' -Recurse -File | Where-Object { $_.Extension -in '.bat','.cmd','.inf','.ini','.md','.sha256','.txt','.url' } | ForEach-Object { $lf = [string][char]10; $cr = [string][char]13; $crlf = $cr + $lf; $t = [System.IO.File]::ReadAllText($_.FullName); [System.IO.File]::WriteAllText($_.FullName, $t.Replace($crlf, $lf).Replace($cr, $lf).Replace($lf, $crlf), [System.Text.UTF8Encoding]::new($false)) }"
 if errorlevel 1 goto :error
 
 echo.
