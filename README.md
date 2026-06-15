@@ -216,12 +216,12 @@ the plugin root — edits take effect on the next refresh (**Ctrl+R**).
 Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
 in any value.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
-| `ReplaceVariables` | `1` | Substitute the variables described above in names |
-| `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
-| `ExpandInFileExtensions` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
+| Section | Key | Default | Meaning |
+| --- | --- | --- | --- |
+| `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
+| `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
+| `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
+| `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
 
 The default templates folder is always the `Templates` folder next to the
 plugin DLL, even when the per-user INI is in effect — that is where the
@@ -232,7 +232,7 @@ To share one template collection with PowerToys New+, point the plugin at
 the New+ templates folder:
 
 ```ini
-[TCNewPlus]
+[Templates]
 TemplatesPath=%LocalAppData%\Microsoft\PowerToys\NewPlus\Templates
 ```
 
@@ -250,11 +250,11 @@ in today's date, the user name, or the project folder name in its body.
 Because expanding variables inside a binary file would corrupt it, this is
 **off by default** and opt-in **per file extension** — the plugin never
 tries to guess whether a file is text. List the extensions to expand in
-`ExpandInFileExtensions`:
+`ReplaceContentVariables`:
 
 ```ini
-[TCNewPlus]
-ExpandInFileExtensions=.md,.txt
+[FileContents]
+ReplaceContentVariables=.md,.txt
 ```
 
 With the above, copying a `.md` or `.txt` template runs its contents
@@ -289,7 +289,7 @@ file-system-plugin model, which leads to a few deliberate differences:
   Refresh with **Ctrl+R** to re-substitute with the current time.
 - **Variable replacement defaults to on.** New+ ships with *Replace
   variables in template filename* disabled; this plugin enables it by
-  default (set `ReplaceVariables=0` for verbatim names).
+  default (set `ReplaceFilenameVariables=0` for verbatim names).
 - **Optional variable expansion inside file contents.** New+ only
   substitutes variables in filenames; this plugin can also expand them in
   the file body for chosen extensions (off by default — see
@@ -304,8 +304,8 @@ you have a `%APPDATA%\GHISLER\TCNewPlus.ini`, that file is used instead of
 the one shipped with the plugin — edit whichever one is in effect.
 
 **A copied file still contains `$YYYY` in its name.** Either
-`ReplaceVariables=0` is set in the INI, or the pattern is not one of the
-supported variables — the patterns are case-sensitive (`$yyyy` is not
+`ReplaceFilenameVariables=0` is set in the INI, or the pattern is not one of
+the supported variables — the patterns are case-sensitive (`$yyyy` is not
 substituted).
 
 **Two templates show as `Name.txt` and `Name (2).txt`.** Two different

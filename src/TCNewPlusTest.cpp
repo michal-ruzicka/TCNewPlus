@@ -302,7 +302,7 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     dllDir = (slash == std::wstring::npos) ? L"." : dllDir.substr(0, slash);
     std::wstring ini = dllDir + L"\\TCNewPlus.ini";
 
-    WritePrivateProfileStringW(L"TCNewPlus", L"TemplatesPath",
+    WritePrivateProfileStringW(L"Templates", L"TemplatesPath",
                                templates.c_str(), ini.c_str());
 
     // --- Load the plugin through the WFX API ------------------------------
@@ -400,10 +400,10 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     Check(iconRc == FS_ICON_USEDEFAULT,
           "FsExtractCustomIconW falls back to default for a missing template");
 
-    // --- In-content variable expansion (ExpandInFileExtensions) ------------
+    // --- In-content variable expansion ([FileContents] ReplaceContentVariables) ---
     const std::string yearA = std::to_string(now.wYear);
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"C:\\tmp\\x");
-    WritePrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", L".md",
+    WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L".md",
                                ini.c_str());
 
     std::wstring varRemote = L"\\Vars " + year + L".md";
@@ -427,7 +427,7 @@ static void RunEndToEndTests(const wchar_t* dllPath)
           ".txt copied verbatim when only .md expansion is enabled");
 
     // Remove the key so later sections see the default (no expansion).
-    WritePrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", nullptr,
+    WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", nullptr,
                                ini.c_str());
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
 
@@ -444,7 +444,7 @@ static void RunEndToEndTests(const wchar_t* dllPath)
         std::wstring ghislerDir = userIni.substr(0, ghSlash);
         bool createdGhisler = CreateDirectoryW(ghislerDir.c_str(), nullptr) != FALSE;
 
-        WritePrivateProfileStringW(L"TCNewPlus", L"TemplatesPath",
+        WritePrivateProfileStringW(L"Templates", L"TemplatesPath",
                                    altTemplates.c_str(), userIni.c_str());
 
         auto userListing =

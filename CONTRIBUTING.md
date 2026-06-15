@@ -91,7 +91,7 @@ shipped in the ZIP) and contains two layers:
    against a temporary template tree. Covers listing, prefix/variable
    substitution, display-name collisions, copying, overwrite handling, the
    read-only refusal of move operations, custom-icon extraction, in-content
-   variable expansion (`ExpandInFileExtensions`), and the per-user INI
+   variable expansion (`[FileContents] ReplaceContentVariables`), and the per-user INI
    precedence over the plugin-dir INI.
 
 Run manually after a build:

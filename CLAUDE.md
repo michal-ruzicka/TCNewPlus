@@ -63,8 +63,9 @@ src/
   fsplugin.h          - WFX plugin API (subset used here)
   app.manifest        - test EXE manifest (long paths)
   pluginst.inf        - TC auto-installer metadata; canonical version source
-  TCNewPlus.ini       - sample config (TemplatesPath, ReplaceVariables,
-                        HideStartingDigits)
+  TCNewPlus.ini       - sample config: [Templates] TemplatesPath;
+                        [FileNames] ReplaceFilenameVariables, HideStartingDigits;
+                        [FileContents] ReplaceContentVariables
 build/                - CMake out-of-source build trees (gitignored)
 dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
 ```
@@ -101,8 +102,10 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   must NOT for file contents (a `%USERPROFILE%` path keeps its `:`/`\`).
   `MakeDisplayName` passes true; the in-content path (`CopyExpanded`)
   passes false.
-- **In-content expansion is opt-in per extension** (`ExpandInFileExtensions`,
-  empty by default). `CopyExpanded` in `FsGetFileW` reads the file as UTF-8
+- **In-content expansion is opt-in per extension**
+  (`[FileContents] ReplaceContentVariables`, empty by default — a
+  comma-separated extension list, not a boolean). `CopyExpanded` in
+  `FsGetFileW` reads the file as UTF-8
   (BOM preserved), expands with copy-time `GetLocalTime`, and writes UTF-8;
   a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the raw
   byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a

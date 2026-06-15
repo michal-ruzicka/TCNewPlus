@@ -25,15 +25,15 @@ First working release.
     `$s`, `$fff`, `$ff`, `$f`), `$PARENT_FOLDER_NAME` in template
     subfolders, and `%ENVIRONMENT_VARIABLE%` expansion, with
     filesystem-invalid characters in substituted values replaced by
-    spaces (`ReplaceVariables`, default on);
+    spaces (`ReplaceFilenameVariables`, default on);
   - colliding display names disambiguated with an ` (2)` suffix.
 - **Read-only by design** — no write entry points are exported, so TC
   disables delete/rename/upload inside the virtual file system; `F6`
   (move) is refused explicitly.
 - **Optional variable expansion inside file contents** (a TCNewPlus
   extension beyond New+, which only substitutes in names). Off by default
-  and opt-in per file extension via `ExpandInFileExtensions` (e.g.
-  `.md,.txt`), so binary files are never touched. Content uses the same
+  and opt-in per file extension via `[FileContents] ReplaceContentVariables`
+  (e.g. `.md,.txt`), so binary files are never touched. Content uses the same
   variables as names but without filename-character sanitisation (a
   `%USERPROFILE%` path keeps its `:`/`\`); listed files are treated as
   UTF-8 (BOM preserved), and anything that is not valid UTF-8 is copied
@@ -45,8 +45,10 @@ First working release.
   template a folder, …).
 - **`Alt+Enter` (Properties)** on a virtual entry shows the real template
   path on disk and the active templates folder.
-- **Configuration via `TCNewPlus.ini`** (`TemplatesPath`,
-  `ReplaceVariables`, `HideStartingDigits`), re-read on every root listing.
+- **Configuration via `TCNewPlus.ini`**, grouped into `[Templates]`
+  (`TemplatesPath`), `[FileNames]` (`ReplaceFilenameVariables`,
+  `HideStartingDigits`) and `[FileContents]` (`ReplaceContentVariables`),
+  re-read on every root listing.
   Looked up first at `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override)
   and then next to the plugin DLL — the first file that exists wins
   entirely, mirroring TCOfficeView. Defaults to the bundled sample

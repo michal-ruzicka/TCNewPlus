@@ -173,18 +173,18 @@ static Config LoadConfig()
             : dir + L"\\TCNewPlus.ini";
 
     wchar_t value[4096] = L"";
-    GetPrivateProfileStringW(L"TCNewPlus", L"TemplatesPath", L"",
+    GetPrivateProfileStringW(L"Templates", L"TemplatesPath", L"",
                              value, ARRAYSIZE(value), ini.c_str());
     cfg.templatesPath = value[0] ? ExpandEnvironment(value)
                                  : dir + L"\\Templates";
 
     cfg.rules.replaceVariables =
-        GetPrivateProfileIntW(L"TCNewPlus", L"ReplaceVariables", 1, ini.c_str()) != 0;
+        GetPrivateProfileIntW(L"FileNames", L"ReplaceFilenameVariables", 1, ini.c_str()) != 0;
     cfg.rules.hideStartingDigits =
-        GetPrivateProfileIntW(L"TCNewPlus", L"HideStartingDigits", 1, ini.c_str()) != 0;
+        GetPrivateProfileIntW(L"FileNames", L"HideStartingDigits", 1, ini.c_str()) != 0;
 
     wchar_t exts[2048] = L"";
-    GetPrivateProfileStringW(L"TCNewPlus", L"ExpandInFileExtensions", L"",
+    GetPrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L"",
                              exts, ARRAYSIZE(exts), ini.c_str());
     cfg.expandExtensions = ParseExtensionList(exts);
 
