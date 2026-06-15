@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Michal Růžička <ruzicka.mich@gmail.com>
+
+// Total Commander shows the FIRST icon (by resource index) found in a File
+// System plugin DLL next to the plugin's name in Network Neighborhood. The
+// low numeric ID keeps this icon first.
+1 ICON "TCNewPlus.ico"

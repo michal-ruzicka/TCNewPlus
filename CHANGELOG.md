@@ -30,6 +30,11 @@ First working release.
 - **Read-only by design** — no write entry points are exported, so TC
   disables delete/rename/upload inside the virtual file system; `F6`
   (move) is refused explicitly.
+- **Icons.** The plugin shows an icon next to its name in Network
+  Neighborhood (embedded icon resource), and every entry under
+  `\\\TCNewPlus` shows the real template file's shell icon via
+  `FsExtractCustomIconW` (a `.docx` template shows the Word icon, a folder
+  template a folder, …).
 - **`Alt+Enter` (Properties)** on a virtual entry shows the real template
   path on disk and the active templates folder.
 - **Configuration via `TCNewPlus.ini`** (`TemplatesPath`,

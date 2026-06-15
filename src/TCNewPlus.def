@@ -13,5 +13,7 @@ EXPORTS
     FsGetFileW
     FsExecuteFile
     FsExecuteFileW
+    FsExtractCustomIcon
+    FsExtractCustomIconW
     FsGetDefRootName
     FsSetDefaultParams

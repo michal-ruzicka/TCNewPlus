@@ -185,11 +185,12 @@ static void TestMakeDisplayName()
 // End-to-end test through the plugin DLL
 // ---------------------------------------------------------------------------
 
-using PFsInitW       = int    (__stdcall*)(int, tProgressProcW, tLogProcW, tRequestProcW);
-using PFsFindFirstW  = HANDLE (__stdcall*)(WCHAR*, WIN32_FIND_DATAW*);
-using PFsFindNextW   = BOOL   (__stdcall*)(HANDLE, WIN32_FIND_DATAW*);
-using PFsFindClose   = int    (__stdcall*)(HANDLE);
-using PFsGetFileW    = int    (__stdcall*)(WCHAR*, WCHAR*, int, RemoteInfoStruct*);
+using PFsInitW           = int    (__stdcall*)(int, tProgressProcW, tLogProcW, tRequestProcW);
+using PFsFindFirstW      = HANDLE (__stdcall*)(WCHAR*, WIN32_FIND_DATAW*);
+using PFsFindNextW       = BOOL   (__stdcall*)(HANDLE, WIN32_FIND_DATAW*);
+using PFsFindClose       = int    (__stdcall*)(HANDLE);
+using PFsGetFileW        = int    (__stdcall*)(WCHAR*, WCHAR*, int, RemoteInfoStruct*);
+using PFsExtractIconW    = int    (__stdcall*)(WCHAR*, int, HICON*);
 
 static int __stdcall TestProgress(int, WCHAR*, WCHAR*, int)
 {
@@ -309,10 +310,11 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     auto fsFindNextW  = reinterpret_cast<PFsFindNextW>(GetProcAddress(dll, "FsFindNextW"));
     auto fsFindClose  = reinterpret_cast<PFsFindClose>(GetProcAddress(dll, "FsFindClose"));
     auto fsGetFileW   = reinterpret_cast<PFsGetFileW>(GetProcAddress(dll, "FsGetFileW"));
+    auto fsIconW      = reinterpret_cast<PFsExtractIconW>(GetProcAddress(dll, "FsExtractCustomIconW"));
 
-    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW,
+    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW,
           "all WFX entry points exported");
-    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW)) {
+    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW)) {
         FreeLibrary(dll);
         return;
     }
@@ -371,6 +373,24 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     rc = fsGetFileW(&remote[0], &local[0],
                     FS_COPYFLAGS_MOVE | FS_COPYFLAGS_OVERWRITE, nullptr);
     Check(rc == FS_FILE_NOTSUPPORTED, "move (F6) is refused — read-only FS");
+
+    // --- Custom icons (FsExtractCustomIconW) -------------------------------
+    HICON icon = nullptr;
+    int iconRc = fsIconW(&remote[0], FS_ICONFLAG_SMALL, &icon);
+    Check(iconRc == FS_ICON_EXTRACTED_DESTROY && icon != nullptr,
+          "FsExtractCustomIconW returns a destroyable icon for a template file");
+    if (icon) DestroyIcon(icon);
+
+    icon = nullptr;
+    std::wstring rootPath = L"\\";
+    iconRc = fsIconW(&rootPath[0], 0, &icon);
+    Check(iconRc == FS_ICON_USEDEFAULT,
+          "FsExtractCustomIconW defers the plugin root to the default icon");
+
+    icon = nullptr;
+    iconRc = fsIconW(&missing[0], FS_ICONFLAG_SMALL, &icon);
+    Check(iconRc == FS_ICON_USEDEFAULT,
+          "FsExtractCustomIconW falls back to default for a missing template");
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over

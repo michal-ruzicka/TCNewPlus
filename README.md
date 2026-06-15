@@ -110,6 +110,10 @@ empty on first use; replace it with your own templates or point the
 plugin at your PowerToys New+ folder (see
 [Configuration](#configuration)).
 
+Each entry shows the shell icon of the file type it will create (a `.docx`
+template the Word icon, a folder template a folder icon, …), and the plugin
+itself appears with its own icon in Network Neighborhood.
+
 Pressing **Enter** or **F3** on a template opens a temporary copy for
 inspection. **Alt+Enter** shows which real file on disk a virtual entry
 comes from. The panel is **read-only**: creating, renaming and deleting

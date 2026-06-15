@@ -89,8 +89,9 @@ shipped in the ZIP) and contains two layers:
    and drive it through the WFX API exactly like Total Commander does:
    `FsInitW` → `FsFindFirstW`/`FsFindNextW`/`FsFindClose` → `FsGetFileW`,
    against a temporary template tree. Covers listing, prefix/variable
-   substitution, display-name collisions, copying, overwrite handling and
-   the read-only refusal of move operations.
+   substitution, display-name collisions, copying, overwrite handling, the
+   read-only refusal of move operations, custom-icon extraction, and the
+   per-user INI precedence over the plugin-dir INI.
 
 Run manually after a build:
 
@@ -297,9 +298,10 @@ filesystem dependencies, and are linked into both the plugin DLL and
 - **Display names are snapshots.** A name listed at 14:59 and copied at
   15:01 keeps the 14:59 substitution — by design, since the displayed
   name must equal the created name.
-- **No custom icons.** Entries show TC's standard file/folder icons;
-  `FsExtractCustomIcon` could surface the real files' shell icons in a
-  future version.
+- **Icons** are the real template files' shell icons
+  (`FsExtractCustomIconW` + `SHGetFileInfo`); the plugin's own Network
+  Neighborhood icon is the first icon resource in the DLL (`TCNewPlus.rc`
+  / `TCNewPlus.ico`).
 
 ## Diagnostics
 

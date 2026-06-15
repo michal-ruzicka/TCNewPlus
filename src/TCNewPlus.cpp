@@ -32,11 +32,14 @@
 #include "NameSubstitution.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
+
+#pragma comment(lib, "shell32.lib")
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -462,6 +465,35 @@ int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
     return FS_EXEC_ERROR;
 }
 
+int __stdcall FsExtractCustomIconW(WCHAR* RemoteName, int ExtractFlags, HICON* TheIcon)
+{
+    const std::wstring vpath = NormalizeVirtualPath(RemoteName);
+
+    // The plugin's own icon in Network Neighborhood comes from the DLL's
+    // icon resource, and the root has no item of its own to draw — leave
+    // ".." / the root to TC's default icon.
+    if (vpath == L"\\")
+        return FS_ICON_USEDEFAULT;
+
+    const std::wstring realPath = ResolveRealPath(vpath, LoadConfig());
+    if (realPath.empty())
+        return FS_ICON_USEDEFAULT;
+
+    // Show the real template file's shell icon (the same icon the created
+    // file will have), so e.g. a .docx template shows the Word document
+    // icon and folder templates show a folder.
+    SHFILEINFOW sfi = {};
+    UINT flags = SHGFI_ICON |
+                 ((ExtractFlags & FS_ICONFLAG_SMALL) ? SHGFI_SMALLICON
+                                                      : SHGFI_LARGEICON);
+    if (SHGetFileInfoW(realPath.c_str(), 0, &sfi, sizeof(sfi), flags) && sfi.hIcon) {
+        *TheIcon = sfi.hIcon;
+        return FS_ICON_EXTRACTED_DESTROY; // TC owns it; DestroyIcon when done
+    }
+
+    return FS_ICON_USEDEFAULT;
+}
+
 // ---------------------------------------------------------------------------
 // ANSI entry points (wrappers for old 32-bit Total Commander versions)
 // ---------------------------------------------------------------------------
@@ -531,6 +563,12 @@ int __stdcall FsExecuteFile(HWND MainWin, char* RemoteName, char* Verb)
     std::wstring remote = AnsiToWide(RemoteName);
     std::wstring verb   = AnsiToWide(Verb);
     return FsExecuteFileW(MainWin, &remote[0], &verb[0]);
+}
+
+int __stdcall FsExtractCustomIcon(char* RemoteName, int ExtractFlags, HICON* TheIcon)
+{
+    std::wstring remote = AnsiToWide(RemoteName);
+    return FsExtractCustomIconW(&remote[0], ExtractFlags, TheIcon);
 }
 
 // ---------------------------------------------------------------------------

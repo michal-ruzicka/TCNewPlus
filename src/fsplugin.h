@@ -49,6 +49,18 @@
 #define FS_COPYFLAGS_EXISTS_DIFFERENTCASE 16  // target exists with different case
 
 // ---------------------------------------------------------------------------
+// FsExtractCustomIcon flags and return codes
+// ---------------------------------------------------------------------------
+
+#define FS_ICONFLAG_SMALL          1  // the small 16x16 icon is requested
+#define FS_ICONFLAG_BACKGROUND     2  // called from TC's background thread
+
+#define FS_ICON_USEDEFAULT         0  // no icon returned; TC shows the default
+#define FS_ICON_EXTRACTED          1  // icon returned; TC must NOT destroy it
+#define FS_ICON_EXTRACTED_DESTROY  2  // icon returned; TC must DestroyIcon it
+#define FS_ICON_DELAYED            3  // extract later on the background thread
+
+// ---------------------------------------------------------------------------
 // FsStatusInfo operation start/end markers and operation codes
 // ---------------------------------------------------------------------------
 
@@ -128,6 +140,9 @@ int    __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags, 
 
 int    __stdcall FsExecuteFile (HWND MainWin, char*  RemoteName, char*  Verb);
 int    __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb);
+
+int    __stdcall FsExtractCustomIcon (char*  RemoteName, int ExtractFlags, HICON* TheIcon);
+int    __stdcall FsExtractCustomIconW(WCHAR* RemoteName, int ExtractFlags, HICON* TheIcon);
 
 void   __stdcall FsGetDefRootName(char* DefRootName, int maxlen);
 void   __stdcall FsSetDefaultParams(FsDefaultParamStruct* dps);

@@ -43,6 +43,7 @@ add_library(TCNewPlus SHARED
     TCNewPlus.cpp
     NameSubstitution.cpp
     TCNewPlus.def
+    TCNewPlus.rc   # embeds the Network Neighborhood plugin icon
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)

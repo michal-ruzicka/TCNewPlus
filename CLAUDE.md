@@ -59,6 +59,7 @@ src/
                         filesystem/plugin dependencies (shared with the test)
   TCNewPlusTest.cpp   - unit tests + end-to-end tests through the WFX API
   TCNewPlus.def       - DLL exports (the export list IS the feature set, see below)
+  TCNewPlus.rc/.ico   - Network Neighborhood plugin icon (first icon resource)
   fsplugin.h          - WFX plugin API (subset used here)
   app.manifest        - test EXE manifest (long paths)
   pluginst.inf        - TC auto-installer metadata; canonical version source
@@ -119,10 +120,27 @@ Reproducible-build pins (EXPECTED_CL / CMAKE_T / CMAKE_SDK in `build.cmd`,
 components in `.vsconfig`) follow the TCOfficeView scheme — see
 [CONTRIBUTING.md](CONTRIBUTING.md#reproducible-builds) before touching them.
 
+## Icons
+
+Two independent mechanisms, both required (per the WFX SDK "How to define an
+icon" page):
+
+- **Plugin icon in Network Neighborhood** — TC loads the *first* icon
+  resource (by index) from the plugin DLL. `TCNewPlus.rc` embeds
+  `TCNewPlus.ico` (a New+ document-with-plus glyph; 16/24/32/48/256 px,
+  PNG-compressed entries) under resource id `1`. No code path produces it.
+- **File/folder icons inside the plugin** — `FsExtractCustomIconW` maps the
+  virtual entry to its real template path and returns that file's shell
+  icon via `SHGetFileInfoW` (so a `.docx` template shows the Word icon, a
+  folder template a folder). Returns `FS_ICON_EXTRACTED_DESTROY` (TC calls
+  `DestroyIcon`); root `\` and unresolved paths return `FS_ICON_USEDEFAULT`.
+
+The `.ico` is a committed binary asset, not regenerated at build time, so it
+does not affect reproducibility. It was generated once with GDI+ (the script
+is not kept in the repo).
+
 ## Future work (not blocking)
 
-- `FsExtractCustomIcon` — show the real files' shell icons instead of TC's
-  generic ones.
 - `FsContentGetValue` — expose the real template path as a content column.
 - Optional `$DATE` / `$TIME` aggregate tokens if New+ ever adds them.
 - Release workflow automation (GitHub Actions triggered by `v*` tags).
