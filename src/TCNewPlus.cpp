@@ -320,9 +320,12 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
         entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
         entry.realPath = realDir + L"\\" + fd.cFileName;
 
+        // Key the map by the exact name handed back to TC (cFileName, which
+        // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with the
+        // name TC echoes back always matches.
         {
             std::lock_guard<std::mutex> lock(g_mapMutex);
-            g_virtualToReal[JoinVirtual(virtualDir, display)] = entry.realPath;
+            g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
         }
 
         out.push_back(std::move(entry));
