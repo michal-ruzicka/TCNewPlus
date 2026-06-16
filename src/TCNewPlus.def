@@ -1,0 +1,19 @@
+; SPDX-License-Identifier: Apache-2.0
+; Copyright 2026 Michal Růžička <ruzicka.mich@gmail.com>
+
+EXPORTS
+    FsInit
+    FsInitW
+    FsFindFirst
+    FsFindFirstW
+    FsFindNext
+    FsFindNextW
+    FsFindClose
+    FsGetFile
+    FsGetFileW
+    FsExecuteFile
+    FsExecuteFileW
+    FsExtractCustomIcon
+    FsExtractCustomIconW
+    FsGetDefRootName
+    FsSetDefaultParams

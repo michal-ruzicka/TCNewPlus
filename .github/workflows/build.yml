@@ -1,0 +1,69 @@
+name: Build
+
+# Runs on every push (all branches) and on every pull request.
+# Purpose: verify that both bitnesses compile cleanly and the tests pass.
+# Releases are NOT published here — artifacts are signed locally and
+# uploaded to GitHub Releases by hand (see CONTRIBUTING.md).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you running this manually? Testing reproducibility (after Microsoft's build environment changes?) or something else?"
+        required: false
+
+# Restrict the GITHUB_TOKEN to the minimum required — read-only checkout.
+# The workflow does not publish releases or open PRs, so no write access
+# is needed.
+permissions:
+  contents: read
+
+# Cancel any in-progress run for the same ref so a fast-follow push does
+# not queue up behind a stale one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Install Visual Studio 2026 Build Tools. The .vsconfig includes the
+      # VC.CMake.Project component, so CMake (and Ninja) ship with the Build
+      # Tools — build.cmd puts them on PATH via VsDevCmd.bat. No separate CMake
+      # install is needed; relying on the bundled CMake also keeps the local
+      # and CI toolchains identical for reproducible builds.
+      - name: Setup the build environment
+        shell: cmd
+        run: |
+          curl.exe -L -o %TEMP%\vs_buildtools.exe https://aka.ms/vs/18/stable/vs_buildtools.exe
+          %TEMP%\vs_buildtools.exe --config .\.vsconfig ^
+            --installPath C:\BuildTools ^
+            --quiet --wait --norestart --nocache
+          rem The VS bootstrapper returns 3010 when a reboot is requested; that
+          rem is still a successful install, so treat it as success.
+          if %errorlevel% equ 3010 exit /b 0
+          exit /b %errorlevel%
+
+      # build.cmd locates Visual Studio Build Tools via vswhere, activates the
+      # compiler environment for each target architecture via VsDevCmd.bat,
+      # drives CMake (NMake Makefiles generator) for both x64 and x86, and
+      # runs the test executable for each bitness.
+      - name: Build and test (x86 + x64)
+        shell: cmd
+        run: build.cmd
+
+      # Make the distributable ZIP downloadable from the Actions run page.
+      # It is not published as a GitHub Release — that step is done locally
+      # after GPG-signing the artifact.
+      - name: Upload distributable ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TCNewPlus-dist
+          path: dist\*.zip
+          if-no-files-found: error
+          retention-days: 90
