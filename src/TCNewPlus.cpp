@@ -33,6 +33,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -156,6 +157,134 @@ static std::wstring UserConfigPath()
     return std::wstring(appdata) + L"\\GHISLER\\TCNewPlus.ini";
 }
 
+// Reads a whole text file into a wide string, honouring a byte-order mark
+// (UTF-8, UTF-16 LE or UTF-16 BE) and defaulting to UTF-8 when there is none.
+// We parse the INI ourselves instead of using GetPrivateProfileString because
+// that API treats a BOM-less file as ANSI (the system code page), which
+// mangles non-ASCII paths (e.g. a folder named "Osobní") in a UTF-8 INI.
+static std::wstring ReadTextFileToWide(const std::wstring& path)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return std::wstring();
+
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(h, &size);
+    std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+    if (!bytes.empty()) {
+        DWORD got = 0;
+        if (!ReadFile(h, &bytes[0], static_cast<DWORD>(bytes.size()), &got, nullptr))
+            got = 0;
+        bytes.resize(got);
+    }
+    CloseHandle(h);
+
+    auto u = [&](size_t i) { return static_cast<unsigned char>(bytes[i]); };
+
+    if (bytes.size() >= 2 && u(0) == 0xFF && u(1) == 0xFE) {           // UTF-16 LE
+        const size_t count = (bytes.size() - 2) / 2;
+        std::wstring w(count, L'\0');
+        memcpy(&w[0], bytes.data() + 2, count * 2);
+        return w;
+    }
+    if (bytes.size() >= 2 && u(0) == 0xFE && u(1) == 0xFF) {           // UTF-16 BE
+        const size_t count = (bytes.size() - 2) / 2;
+        std::wstring w(count, L'\0');
+        for (size_t i = 0; i < count; ++i)
+            w[i] = static_cast<wchar_t>((u(2 + 2 * i) << 8) | u(3 + 2 * i));
+        return w;
+    }
+
+    size_t off = (bytes.size() >= 3 && u(0) == 0xEF && u(1) == 0xBB && u(2) == 0xBF)
+                     ? 3 : 0;                                          // skip UTF-8 BOM
+    int len = static_cast<int>(bytes.size() - off);
+    if (len <= 0)
+        return std::wstring();
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, bytes.data() + off, len, nullptr, 0);
+    std::wstring w(wlen, L'\0');
+    if (wlen > 0)
+        MultiByteToWideChar(CP_UTF8, 0, bytes.data() + off, len, &w[0], wlen);
+    return w;
+}
+
+static std::wstring TrimWs(const std::wstring& s)
+{
+    size_t b = s.find_first_not_of(L" \t");
+    if (b == std::wstring::npos)
+        return std::wstring();
+    size_t e = s.find_last_not_of(L" \t");
+    return s.substr(b, e - b + 1);
+}
+
+// Finds [section] key=value in INI text (case-insensitive section and key).
+// Lines starting with ';' or '#' are comments. Surrounding double quotes are
+// stripped from the value. Returns true and sets `out` when found.
+static bool IniLookup(const std::wstring& text, const std::wstring& section,
+                      const std::wstring& key, std::wstring& out)
+{
+    std::wstring curSection;
+    size_t pos = 0;
+    const size_t n = text.size();
+
+    while (pos < n) {
+        size_t eol = text.find_first_of(L"\r\n", pos);
+        if (eol == std::wstring::npos)
+            eol = n;
+        std::wstring line = TrimWs(text.substr(pos, eol - pos));
+        pos = (eol < n) ? eol + 1 : n;
+
+        if (line.empty() || line[0] == L';' || line[0] == L'#')
+            continue;
+
+        if (line[0] == L'[') {
+            size_t close = line.find(L']');
+            if (close != std::wstring::npos)
+                curSection = line.substr(1, close - 1);
+            continue;
+        }
+
+        size_t eq = line.find(L'=');
+        if (eq == std::wstring::npos)
+            continue;
+
+        if (_wcsicmp(TrimWs(line.substr(0, eq)).c_str(), key.c_str()) == 0 &&
+            _wcsicmp(curSection.c_str(), section.c_str()) == 0) {
+            std::wstring val = TrimWs(line.substr(eq + 1));
+            if (val.size() >= 2 && val.front() == L'"' && val.back() == L'"')
+                val = val.substr(1, val.size() - 2);
+            out = val;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool IniLookupBool(const std::wstring& text, const std::wstring& section,
+                          const std::wstring& key, bool def)
+{
+    std::wstring v;
+    if (!IniLookup(text, section, key, v) || v.empty())
+        return def;
+    if (_wcsicmp(v.c_str(), L"0") == 0 || _wcsicmp(v.c_str(), L"false") == 0 ||
+        _wcsicmp(v.c_str(), L"no") == 0 || _wcsicmp(v.c_str(), L"off") == 0)
+        return false;
+    if (_wcsicmp(v.c_str(), L"1") == 0 || _wcsicmp(v.c_str(), L"true") == 0 ||
+        _wcsicmp(v.c_str(), L"yes") == 0 || _wcsicmp(v.c_str(), L"on") == 0)
+        return true;
+    return _wtoi(v.c_str()) != 0;
+}
+
+// Strips trailing path separators so e.g. a TemplatesPath written with a
+// trailing backslash ("...\Templates\") joins cleanly with child names.
+static std::wstring StripTrailingSeparators(std::wstring p)
+{
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/'))
+        p.pop_back();
+    return p;
+}
+
 static Config LoadConfig()
 {
     Config cfg;
@@ -166,26 +295,27 @@ static Config LoadConfig()
     //   1. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
     //   2. <plugin install dir>\TCNewPlus.ini (system-wide; ships with the plugin)
     const std::wstring userIni = UserConfigPath();
-    const std::wstring ini =
+    const std::wstring iniPath =
         (!userIni.empty() &&
          GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
             ? userIni
             : dir + L"\\TCNewPlus.ini";
 
-    wchar_t value[4096] = L"";
-    GetPrivateProfileStringW(L"Templates", L"TemplatesPath", L"",
-                             value, ARRAYSIZE(value), ini.c_str());
-    cfg.templatesPath = value[0] ? ExpandEnvironment(value)
-                                 : dir + L"\\Templates";
+    const std::wstring ini = ReadTextFileToWide(iniPath);
+
+    std::wstring value;
+    cfg.templatesPath =
+        (IniLookup(ini, L"Templates", L"TemplatesPath", value) && !value.empty())
+            ? StripTrailingSeparators(ExpandEnvironment(value))
+            : dir + L"\\Templates";
 
     cfg.rules.replaceVariables =
-        GetPrivateProfileIntW(L"FileNames", L"ReplaceFilenameVariables", 1, ini.c_str()) != 0;
+        IniLookupBool(ini, L"FileNames", L"ReplaceFilenameVariables", true);
     cfg.rules.hideStartingDigits =
-        GetPrivateProfileIntW(L"FileNames", L"HideStartingDigits", 1, ini.c_str()) != 0;
+        IniLookupBool(ini, L"FileNames", L"HideStartingDigits", true);
 
-    wchar_t exts[2048] = L"";
-    GetPrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L"",
-                             exts, ARRAYSIZE(exts), ini.c_str());
+    std::wstring exts;
+    IniLookup(ini, L"FileContents", L"ReplaceContentVariables", exts);
     cfg.expandExtensions = ParseExtensionList(exts);
 
     return cfg;

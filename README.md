@@ -214,7 +214,9 @@ customise just for your user account, copy that file to
 is then ignored entirely. The chosen file is re-read on every listing of
 the plugin root — edits take effect on the next refresh (**Ctrl+R**).
 Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
-in any value.
+in any value. The INI is read as **UTF-8** (a UTF-8 or UTF-16 byte-order
+mark is also honoured), so paths with accented or other non-ASCII
+characters work — just save the file as UTF-8 (the default in most editors).
 
 | Section | Key | Default | Meaning |
 | --- | --- | --- | --- |

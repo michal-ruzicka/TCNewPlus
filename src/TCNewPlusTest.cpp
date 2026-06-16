@@ -213,6 +213,28 @@ static void WriteTextFile(const std::wstring& path, const char* content)
     }
 }
 
+// Writes a UTF-8 file (no BOM) from a wide string — the encoding a modern
+// text editor produces for an INI. Used to verify the plugin reads non-ASCII
+// config values from a UTF-8 INI rather than misreading them as ANSI.
+static void WriteUtf8File(const std::wstring& path, const std::wstring& wcontent)
+{
+    int n = WideCharToMultiByte(CP_UTF8, 0, wcontent.data(),
+                                static_cast<int>(wcontent.size()),
+                                nullptr, 0, nullptr, nullptr);
+    std::string bytes(n, '\0');
+    if (n > 0)
+        WideCharToMultiByte(CP_UTF8, 0, wcontent.data(),
+                            static_cast<int>(wcontent.size()),
+                            &bytes[0], n, nullptr, nullptr);
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+        CloseHandle(h);
+    }
+}
+
 static std::string ReadTextFile(const std::wstring& path)
 {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
@@ -430,6 +452,35 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", nullptr,
                                ini.c_str());
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
+
+    // --- Non-ASCII TemplatesPath read from a UTF-8 INI ---------------------
+    // Regression: a templates path with non-ASCII characters (e.g. a folder
+    // named "Šablóny") in a UTF-8-encoded INI must be read correctly. The old
+    // GetPrivateProfileString-based reader misread BOM-less UTF-8 as ANSI.
+    {
+        std::wstring naDir = fixture + L"\\Šablóny"; // "Šablóny"
+        CreateDirectoryW(naDir.c_str(), nullptr);
+        WriteTextFile(naDir + L"\\Accented Template.txt", "x");
+
+        std::wstring iniText = L"[Templates]\r\nTemplatesPath=" + naDir + L"\r\n";
+        WriteUtf8File(ini, iniText);
+
+        auto naListing =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(ContainsName(naListing, L"Accented Template.txt"),
+              "non-ASCII TemplatesPath from a UTF-8 INI is read correctly");
+    }
+
+    // A trailing backslash on TemplatesPath must not break enumeration.
+    {
+        std::wstring iniText =
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\\\r\n";
+        WriteUtf8File(ini, iniText);
+        auto trailing =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(ContainsName(trailing, L"Plain.txt"),
+              "trailing backslash on TemplatesPath is tolerated");
+    }
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over

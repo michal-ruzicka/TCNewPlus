@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Non-ASCII paths in `TCNewPlus.ini` are now read correctly.** The INI is
+  parsed as UTF-8 (a UTF-8 or UTF-16 byte-order mark is also honoured) instead
+  of via `GetPrivateProfileString`, which treats a BOM-less file as ANSI and
+  mangled values such as a `TemplatesPath` pointing at a folder named
+  `Osobní`. A trailing path separator on `TemplatesPath` is now stripped so a
+  value like `...\Templates\` enumerates correctly.
+
 ## [v1.0.0] – 2026-06-16
 
 First public release.
@@ -66,4 +77,5 @@ First public release.
   clean-room verification builds.
 
 
+[Unreleased]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.0.0...HEAD
 [v1.0.0]: https://github.com/michal-ruzicka/TCNewPlus/releases/tag/v1.0.0
