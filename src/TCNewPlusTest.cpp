@@ -505,6 +505,33 @@ static void RunEndToEndTests(const wchar_t* dllPath)
         Check(erc == FS_EXEC_SYMLINK, "opening the link returns FS_EXEC_SYMLINK");
         Check(std::wstring(rn) == templates,
               "link redirects to the real templates folder");
+
+        // The link is a file, not a browsable directory: trying to enter it
+        // (e.g. "open in new tab") must not re-list the templates folder.
+        auto intoLink = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose,
+                                       L"\\Open Templates");
+        Check(intoLink.empty(), "the link entry cannot be entered as a directory");
+
+        // Copying the link out is refused (it is not a real file).
+        std::wstring linkRemote = L"\\Open Templates";
+        std::wstring linkLocal  = outDir + L"\\link-copy";
+        int crc = fsGetFileW(&linkRemote[0], &linkLocal[0], 0, nullptr);
+        Check(crc == FS_FILE_NOTSUPPORTED, "copying the link entry is refused");
+    }
+
+    // A non-existent subpath lists nothing and is reported as an EMPTY
+    // directory (ERROR_NO_MORE_FILES), not a missing one — so TC stays inside
+    // the plugin instead of jumping to a previous directory from history.
+    {
+        WIN32_FIND_DATAW fd;
+        std::wstring bogus = L"\\zzz-does-not-exist";
+        SetLastError(0);
+        HANDLE h = fsFindFirstW(&bogus[0], &fd);
+        Check(h == INVALID_HANDLE_VALUE, "non-existent subpath returns no handle");
+        Check(GetLastError() == ERROR_NO_MORE_FILES,
+              "non-existent subpath reported as empty (no history jump)");
+        if (h != INVALID_HANDLE_VALUE)
+            fsFindClose(h);
     }
 
     // Empty value disables the link entry (default behaviour).

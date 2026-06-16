@@ -258,6 +258,11 @@ prefix is hidden per `HideStartingDigits`, so the `0. ` above just sorts it to
 the top when prefixes are kept. The label must be a valid file name (no
 `\ / : * ? " < > |`); an empty or invalid value (the default) shows no link.
 
+The entry is a **shortcut, not a browsable folder**: use **Enter** to follow
+it. Operations that open a folder *without* "executing" it (for example
+"open in a new tab") do not follow the shortcut — they simply do nothing,
+because there is no virtual folder to descend into.
+
 #### Variable Expansion Inside File Contents
 
 > **Extension beyond PowerToys New+.** This feature does **not** exist
@@ -338,6 +343,14 @@ disk to give them distinct names.
 
 **`F6` (move) fails.** By design — moving would delete the template. The
 virtual file system is read-only; use `F5` (copy).
+
+**I navigated to a path under `\\\TCNewPlus` that doesn't exist and got an
+empty panel.** That is intentional: a non-existent sub-path shows an empty
+listing so the panel stays inside the plugin instead of jumping back to a
+previous directory. Press **Backspace** (or `cd ..`) to return to the
+template list. The same applies if you "open in a new tab" on the
+templates-folder link entry — use **Enter** on it instead, which follows it
+to the real folder.
 
 **Where does this entry come from?** Press **Alt+Enter** (Properties) on
 any entry to see the real template path on disk and the active templates

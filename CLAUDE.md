@@ -110,10 +110,11 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the raw
   byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
   TCNewPlus extension — New+ only substitutes in names.
-- **Empty-directory contract:** `FsFindFirstW` must return
+- **Empty-directory contract:** `FsFindFirstW` returns
   `INVALID_HANDLE_VALUE` with `SetLastError(ERROR_NO_MORE_FILES)` for an
-  empty dir, and `ERROR_PATH_NOT_FOUND` for a missing one — TC
-  distinguishes the two.
+  empty dir and `ERROR_PATH_NOT_FOUND` for a missing root; TC distinguishes
+  the two. (A missing *subpath* is reported as empty, not missing — see the
+  "Only the root and real subfolders are listable" note below for why.)
 - **Source files are UTF-8.** CMakeLists passes `/utf-8` to MSVC so
   literals containing em-dashes / accented characters don't depend on the
   system ANSI code page.
@@ -125,14 +126,31 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   per-key merge. The default `TemplatesPath` stays relative to the DLL
   directory regardless of which INI wins (that's where the samples ship).
 - **The templates-folder link** (`[Templates] ShowLinkToTemplatesDir`) is an
-  extra root entry added in `EnumerateVirtualDir` (root only), tracked in
-  `g_linkPaths`. It is a *file* entry (not a directory) so Enter triggers
+  extra root entry added in `EnumerateVirtualDir` (root only). It is tracked
+  **only** in `g_linkPaths`, deliberately NOT in `g_virtualToReal`: if it
+  resolved to a real path, TC could treat it as a browsable directory and
+  "open in new tab" / `FsFindFirstW` would re-list the templates folder as a
+  phantom subdirectory. It is a *file* entry, so Enter triggers
   `FsExecuteFileW`, which returns `FS_EXEC_SYMLINK` with the real templates
-  path — TC then navigates there. `FsLinksToLocalFiles` is deliberately NOT
-  used: per the SDK it would turn this into a "temporary panel" plugin and
-  change the whole model. The label runs through `MakeDisplayName` and is
-  validated with `IsValidEntryName`. The ANSI `FsExecuteFile` wrapper copies
-  the redirect path back into its caller buffer (needs `MAX_PATH`).
+  path and TC navigates there. `FsExtractCustomIconW` gives it a folder icon
+  from attributes (`SHGFI_USEFILEATTRIBUTES`, no disk access) and `FsGetFileW`
+  refuses to copy it (`FS_FILE_NOTSUPPORTED`). `FsLinksToLocalFiles` is
+  deliberately NOT used: per the SDK it would turn this into a "temporary
+  panel" plugin and change the whole model. The label runs through
+  `MakeDisplayName` and is validated with `IsValidEntryName`. The ANSI
+  `FsExecuteFile` wrapper copies the redirect path back into its caller
+  buffer (needs `MAX_PATH`).
+- **Only the root and real subfolders are listable.** A non-resolvable path
+  (a file path, the link entry opened as a folder, or a typed non-existent
+  name) is never given a bogus success. `FsFindFirstW` reports a failing
+  ROOT as `ERROR_PATH_NOT_FOUND` (the templates folder is genuinely
+  missing/unreadable) but a failing SUBPATH as `ERROR_NO_MORE_FILES` (empty):
+  per the SDK, TC treats "not found" by bouncing the panel to a previous
+  directory from history (looks like a random jump), whereas "empty" keeps it
+  inside the plugin on an empty panel, one Backspace from the root. The
+  distinction is the only lever the plugin has — `FsFindFirst` cannot redirect
+  TC to another path (only `FsExecuteFile` can, and it is not called for
+  directory navigation).
 - **The INI is parsed by hand as UTF-8, not via `GetPrivateProfileString`.**
   `ReadTextFileToWide` + `IniLookup` honour a UTF-8/UTF-16 BOM and otherwise
   assume UTF-8. Do NOT switch back to `GetPrivateProfileString*`: it treats a

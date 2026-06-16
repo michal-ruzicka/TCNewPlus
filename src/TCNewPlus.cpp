@@ -375,6 +375,13 @@ static std::wstring MapLookup(const std::wstring& vpath)
     return (it != g_virtualToReal.end()) ? it->second : std::wstring();
 }
 
+// True if `vpath` is the virtual "link to the templates folder" entry.
+static bool IsTemplatesDirLink(const std::wstring& vpath)
+{
+    std::lock_guard<std::mutex> lock(g_mapMutex);
+    return g_linkPaths.count(vpath) != 0;
+}
+
 static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                                 const Config&       cfg,
                                 std::vector<VirtualEntry>& out);
@@ -528,12 +535,16 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                 link.fd.ftLastWriteTime = ft;
             wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
             link.fd.cAlternateFileName[0] = L'\0';
-            link.realPath = cfg.templatesPath; // for the folder icon
 
+            // Track the link ONLY in g_linkPaths — deliberately NOT in
+            // g_virtualToReal. If it were resolvable to a real path, TC could
+            // treat it as a browsable directory (e.g. "open in new tab")
+            // and FsFindFirstW would re-list the templates folder as a phantom
+            // subdirectory. It is a file entry; Enter goes through
+            // FsExecuteFileW, which redirects to the real folder.
             const std::wstring linkVPath = JoinVirtual(L"\\", link.fd.cFileName);
             {
                 std::lock_guard<std::mutex> lock(g_mapMutex);
-                g_virtualToReal[linkVPath] = link.realPath;
                 g_linkPaths.insert(linkVPath);
             }
             out.push_back(std::move(link));
@@ -585,7 +596,17 @@ HANDLE __stdcall FsFindFirstW(WCHAR* Path, WIN32_FIND_DATAW* FindData)
     auto* ctx = new FindContext();
     if (!EnumerateVirtualDir(virtualDir, cfg, ctx->entries)) {
         delete ctx;
-        SetLastError(ERROR_PATH_NOT_FOUND);
+        // A failing ROOT means the templates folder itself is missing or
+        // unreadable — a real configuration error, so report "path not found".
+        //
+        // A failing SUBPATH (a typed non-existent name, or the link entry
+        // opened as a folder) is reported as an empty directory instead. TC
+        // treats ERROR_NO_MORE_FILES as "exists but empty" and stays inside
+        // the plugin showing an empty panel — one Backspace from the root —
+        // rather than bouncing the panel to an unrelated directory from its
+        // history, which a generic error makes it do.
+        SetLastError(virtualDir == L"\\" ? ERROR_PATH_NOT_FOUND
+                                         : ERROR_NO_MORE_FILES);
         return INVALID_HANDLE_VALUE;
     }
 
@@ -721,8 +742,13 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (CopyFlags & FS_COPYFLAGS_MOVE)
         return FS_FILE_NOTSUPPORTED;
 
-    const Config cfg = LoadConfig();
     const std::wstring vpath = NormalizeVirtualPath(RemoteName);
+
+    // The templates-folder link is not a real file — it cannot be copied out.
+    if (IsTemplatesDirLink(vpath))
+        return FS_FILE_NOTSUPPORTED;
+
+    const Config cfg = LoadConfig();
     const std::wstring realPath = ResolveRealPath(vpath, cfg);
     if (realPath.empty())
         return FS_FILE_NOTFOUND;
@@ -816,12 +842,7 @@ int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
     if (_wcsicmp(Verb, L"open") == 0) {
         const std::wstring vpath = NormalizeVirtualPath(RemoteName);
 
-        bool isLink;
-        {
-            std::lock_guard<std::mutex> lock(g_mapMutex);
-            isLink = g_linkPaths.count(vpath) != 0;
-        }
-        if (isLink) {
+        if (IsTemplatesDirLink(vpath)) {
             // The templates-folder link: navigate TC straight to the real
             // folder. FS_EXEC_SYMLINK accepts a local path (drive letter or
             // UNC) of at most MAX_PATH-1 characters in RemoteName.
@@ -859,6 +880,21 @@ int __stdcall FsExtractCustomIconW(WCHAR* RemoteName, int ExtractFlags, HICON* T
     // ".." / the root to TC's default icon.
     if (vpath == L"\\")
         return FS_ICON_USEDEFAULT;
+
+    // The templates-folder link has no real file of its own; show a generic
+    // folder icon derived from attributes (no disk access).
+    if (IsTemplatesDirLink(vpath)) {
+        SHFILEINFOW sfi = {};
+        UINT flags = SHGFI_ICON | SHGFI_USEFILEATTRIBUTES |
+                     ((ExtractFlags & FS_ICONFLAG_SMALL) ? SHGFI_SMALLICON
+                                                         : SHGFI_LARGEICON);
+        if (SHGetFileInfoW(L"folder", FILE_ATTRIBUTE_DIRECTORY, &sfi, sizeof(sfi),
+                           flags) && sfi.hIcon) {
+            *TheIcon = sfi.hIcon;
+            return FS_ICON_EXTRACTED_DESTROY;
+        }
+        return FS_ICON_USEDEFAULT;
+    }
 
     const std::wstring realPath = ResolveRealPath(vpath, LoadConfig());
     if (realPath.empty())
