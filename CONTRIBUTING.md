@@ -38,7 +38,7 @@ linked against the static MSVC runtime.
 | `CONTRIBUTING.md` | Developer documentation (this file); bundled in every release ZIP |
 | `LICENSE.md` | Apache License 2.0; bundled in every release ZIP |
 | `README.md` | End-user documentation; bundled in every release ZIP |
-| `setup-build-environment-example.cmd` | One-shot script: downloads sources from GitHub, installs Visual Studio Build Tools and CMake, and runs `build.cmd`; designed for VMs and Windows Sandbox |
+| `setup-build-environment-example.cmd` | One-shot script: downloads sources from GitHub, installs Visual Studio Build Tools (CMake ships with them via the `VC.CMake.Project` component in `.vsconfig`), and runs `build.cmd`; designed for VMs and Windows Sandbox |
 
 ## Build
 
