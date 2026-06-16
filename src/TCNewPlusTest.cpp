@@ -195,6 +195,7 @@ using PFsFindNextW       = BOOL   (__stdcall*)(HANDLE, WIN32_FIND_DATAW*);
 using PFsFindClose       = int    (__stdcall*)(HANDLE);
 using PFsGetFileW        = int    (__stdcall*)(WCHAR*, WCHAR*, int, RemoteInfoStruct*);
 using PFsExtractIconW    = int    (__stdcall*)(WCHAR*, int, HICON*);
+using PFsExecuteW        = int    (__stdcall*)(HWND, WCHAR*, WCHAR*);
 
 static int __stdcall TestProgress(int, WCHAR*, WCHAR*, int)
 {
@@ -339,10 +340,11 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     auto fsFindClose  = reinterpret_cast<PFsFindClose>(GetProcAddress(dll, "FsFindClose"));
     auto fsGetFileW   = reinterpret_cast<PFsGetFileW>(GetProcAddress(dll, "FsGetFileW"));
     auto fsIconW      = reinterpret_cast<PFsExtractIconW>(GetProcAddress(dll, "FsExtractCustomIconW"));
+    auto fsExecW      = reinterpret_cast<PFsExecuteW>(GetProcAddress(dll, "FsExecuteFileW"));
 
-    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW,
+    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW && fsExecW,
           "all WFX entry points exported");
-    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW)) {
+    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW && fsExecW)) {
         FreeLibrary(dll);
         return;
     }
@@ -480,6 +482,42 @@ static void RunEndToEndTests(const wchar_t* dllPath)
             ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
         Check(ContainsName(trailing, L"Plain.txt"),
               "trailing backslash on TemplatesPath is tolerated");
+    }
+
+    // --- Templates-folder link entry (ShowLinkToTemplatesDir) --------------
+    {
+        WriteUtf8File(ini,
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+            L"ShowLinkToTemplatesDir=0. Open Templates\r\n");
+
+        auto withLink =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        // HideStartingDigits defaults on, so "0. " is stripped. ContainsName's
+        // default expects a file (not a directory) — Enter must open, not enter.
+        Check(ContainsName(withLink, L"Open Templates"),
+              "ShowLinkToTemplatesDir adds a root link entry (as a file)");
+
+        // Opening the link returns FS_EXEC_SYMLINK pointing at the real folder.
+        wchar_t rn[MAX_PATH];
+        lstrcpynW(rn, L"\\Open Templates", MAX_PATH);
+        std::wstring openVerb = L"open";
+        int erc = fsExecW(nullptr, rn, &openVerb[0]);
+        Check(erc == FS_EXEC_SYMLINK, "opening the link returns FS_EXEC_SYMLINK");
+        Check(std::wstring(rn) == templates,
+              "link redirects to the real templates folder");
+    }
+
+    // Empty value disables the link entry (default behaviour).
+    {
+        WriteUtf8File(ini,
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+            L"ShowLinkToTemplatesDir=\r\n");
+        auto noLink =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(!ContainsName(noLink, L"Open Templates"),
+              "empty ShowLinkToTemplatesDir shows no link entry");
+        Check(ContainsName(noLink, L"Plain.txt"),
+              "normal entries still listed when the link is disabled");
     }
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------

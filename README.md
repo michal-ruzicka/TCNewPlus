@@ -221,6 +221,7 @@ characters work — just save the file as UTF-8 (the default in most editors).
 | Section | Key | Default | Meaning |
 | --- | --- | --- | --- |
 | `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
+| `[Templates]` | `ShowLinkToTemplatesDir` | *(empty)* | Label for an extra entry that opens the real templates folder (see below) |
 | `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
 | `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
 | `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
@@ -237,6 +238,25 @@ the New+ templates folder:
 [Templates]
 TemplatesPath=%LocalAppData%\Microsoft\PowerToys\NewPlus\Templates
 ```
+
+#### Link to the Templates Folder
+
+Like the *Open templates folder* item in the PowerToys New+ menu, the plugin
+can show an extra entry in `\\\TCNewPlus` that takes you straight to the real
+folder your templates live in. Set `ShowLinkToTemplatesDir` (under
+`[Templates]`) to the label you want that entry to have:
+
+```ini
+[Templates]
+ShowLinkToTemplatesDir=0. Open templates folder
+```
+
+Pressing **Enter** on the entry switches the panel to the actual templates
+folder on disk (whatever `TemplatesPath` resolves to). The label follows the
+same naming rules as templates — variables are expanded and the sorting
+prefix is hidden per `HideStartingDigits`, so the `0. ` above just sorts it to
+the top when prefixes are kept. The label must be a valid file name (no
+`\ / : * ? " < > |`); an empty or invalid value (the default) shows no link.
 
 #### Variable Expansion Inside File Contents
 

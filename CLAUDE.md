@@ -124,6 +124,15 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
   per-key merge. The default `TemplatesPath` stays relative to the DLL
   directory regardless of which INI wins (that's where the samples ship).
+- **The templates-folder link** (`[Templates] ShowLinkToTemplatesDir`) is an
+  extra root entry added in `EnumerateVirtualDir` (root only), tracked in
+  `g_linkPaths`. It is a *file* entry (not a directory) so Enter triggers
+  `FsExecuteFileW`, which returns `FS_EXEC_SYMLINK` with the real templates
+  path — TC then navigates there. `FsLinksToLocalFiles` is deliberately NOT
+  used: per the SDK it would turn this into a "temporary panel" plugin and
+  change the whole model. The label runs through `MakeDisplayName` and is
+  validated with `IsValidEntryName`. The ANSI `FsExecuteFile` wrapper copies
+  the redirect path back into its caller buffer (needs `MAX_PATH`).
 - **The INI is parsed by hand as UTF-8, not via `GetPrivateProfileString`.**
   `ReadTextFileToWide` + `IniLookup` honour a UTF-8/UTF-16 BOM and otherwise
   assume UTF-8. Do NOT switch back to `GetPrivateProfileString*`: it treats a

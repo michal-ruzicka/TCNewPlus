@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional link to the templates folder** (`[Templates]
+  ShowLinkToTemplatesDir`), similar to the *Open templates folder* item in the
+  PowerToys New+ menu. When set to a label, an extra entry appears in
+  `\\\TCNewPlus`; pressing Enter on it switches the panel to the real
+  templates folder (`FS_EXEC_SYMLINK`). The label goes through the usual
+  naming rules (variable expansion + `HideStartingDigits`) and must be a valid
+  file name; empty/absent (the default) shows no link.
+
 ### Fixed
 
 - **Non-ASCII paths in `TCNewPlus.ini` are now read correctly.** The INI is

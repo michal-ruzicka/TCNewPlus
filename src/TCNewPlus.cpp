@@ -66,6 +66,11 @@ struct CaseInsensitiveLess {
 static std::map<std::wstring, std::wstring, CaseInsensitiveLess> g_virtualToReal;
 static std::mutex g_mapMutex;
 
+// Virtual paths that are "link to the templates folder" entries (the
+// ShowLinkToTemplatesDir feature). Opening one navigates TC to the real
+// templates directory rather than copying a file. Guarded by g_mapMutex.
+static std::set<std::wstring, CaseInsensitiveLess> g_linkPaths;
+
 struct VirtualEntry {
     WIN32_FIND_DATAW fd;       // cFileName already holds the display name
     std::wstring     realPath;
@@ -86,6 +91,9 @@ struct Config {
     // Extensions (".md", ".txt", …) whose file contents should have New+
     // variables expanded on copy. Empty by default — no in-content expansion.
     std::set<std::wstring, CaseInsensitiveLess> expandExtensions;
+    // Label for an extra root entry that links to the real templates folder
+    // (ShowLinkToTemplatesDir). Empty = no link entry shown.
+    std::wstring linkName;
 };
 
 // Splits a comma/semicolon-separated extension list into a set, trimming
@@ -318,6 +326,10 @@ static Config LoadConfig()
     IniLookup(ini, L"FileContents", L"ReplaceContentVariables", exts);
     cfg.expandExtensions = ParseExtensionList(exts);
 
+    // IniLookup already trims the value; an absent key or empty value leaves
+    // linkName empty, which disables the templates-folder link entry.
+    IniLookup(ini, L"Templates", L"ShowLinkToTemplatesDir", cfg.linkName);
+
     return cfg;
 }
 
@@ -367,6 +379,51 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                                 const Config&       cfg,
                                 std::vector<VirtualEntry>& out);
 
+// A display name is valid for the panel if it is non-empty and contains no
+// characters that are illegal in a Windows filename. Used to reject a bad
+// ShowLinkToTemplatesDir value (real template files can never carry such
+// characters, so only the user-typed link label needs checking).
+static bool IsValidEntryName(const std::wstring& name)
+{
+    if (name.empty())
+        return false;
+    for (wchar_t c : name) {
+        switch (c) {
+            case L'\\': case L'/': case L':': case L'*':
+            case L'?':  case L'"': case L'<': case L'>': case L'|':
+                return false;
+            default:
+                if (c < 0x20)
+                    return false;
+        }
+    }
+    return true;
+}
+
+// Ensures `display` is unique within a directory listing, appending " (2)",
+// " (3)", … before the extension on collision. Records the chosen name in
+// `usedNames`.
+static std::wstring MakeUniqueName(std::wstring display, bool isDir,
+                                   std::set<std::wstring, CaseInsensitiveLess>& usedNames)
+{
+    if (usedNames.count(display)) {
+        size_t dot = isDir ? std::wstring::npos : display.find_last_of(L'.');
+        std::wstring stem = (dot == std::wstring::npos) ? display : display.substr(0, dot);
+        std::wstring ext  = (dot == std::wstring::npos) ? L"" : display.substr(dot);
+        for (int ordinal = 2; ; ++ordinal) {
+            wchar_t suffix[16];
+            swprintf_s(suffix, L" (%d)", ordinal);
+            std::wstring candidate = stem + suffix + ext;
+            if (!usedNames.count(candidate)) {
+                display = candidate;
+                break;
+            }
+        }
+    }
+    usedNames.insert(display);
+    return display;
+}
+
 // Maps a virtual path to the real template path, enumerating ancestor
 // directories on demand (TC may call FsGetFile without a prior listing in
 // this process, e.g. when resuming a queued background transfer).
@@ -400,8 +457,11 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW((realDir + L"\\*").c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE)
-        return GetLastError() == ERROR_FILE_NOT_FOUND; // empty directory
+    // INVALID_HANDLE_VALUE with ERROR_FILE_NOT_FOUND means the directory
+    // exists but is empty — keep going (we may still add the link entry).
+    // Any other error means the directory is missing/unreadable.
+    if (hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND)
+        return false;
 
     // One time snapshot per directory listing so all names in the panel
     // carry the same timestamp.
@@ -415,53 +475,71 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
     std::set<std::wstring, CaseInsensitiveLess> usedNames;
 
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
-            continue;
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
+                continue;
 
-        std::wstring display =
-            MakeDisplayName(fd.cFileName, cfg.rules, now, parentName);
-
-        // Two templates can collapse to the same display name (e.g. "1. A"
-        // and "2. A") — disambiguate with " (2)" before the extension.
-        if (usedNames.count(display)) {
             const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            size_t dot = isDir ? std::wstring::npos : display.find_last_of(L'.');
-            std::wstring stem = (dot == std::wstring::npos) ? display : display.substr(0, dot);
-            std::wstring ext  = (dot == std::wstring::npos) ? L"" : display.substr(dot);
-            for (int ordinal = 2; ; ++ordinal) {
-                wchar_t suffix[16];
-                swprintf_s(suffix, L" (%d)", ordinal);
-                std::wstring candidate = stem + suffix + ext;
-                if (!usedNames.count(candidate)) {
-                    display = candidate;
-                    break;
-                }
+            std::wstring display = MakeUniqueName(
+                MakeDisplayName(fd.cFileName, cfg.rules, now, parentName),
+                isDir, usedNames);
+
+            VirtualEntry entry;
+            entry.fd = fd;
+            wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
+            entry.fd.cAlternateFileName[0] = L'\0';
+            // The copy TC creates must be writable even if the template is
+            // marked read-only on disk — New+ copies are ordinary new files.
+            entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+            entry.realPath = realDir + L"\\" + fd.cFileName;
+
+            // Key the map by the exact name handed back to TC (cFileName, which
+            // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with
+            // the name TC echoes back always matches.
+            {
+                std::lock_guard<std::mutex> lock(g_mapMutex);
+                g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
             }
+
+            out.push_back(std::move(entry));
+        } while (FindNextFileW(hFind, &fd));
+
+        FindClose(hFind);
+    }
+
+    // Optional "link to the templates folder" entry (ShowLinkToTemplatesDir),
+    // shown only at the root. Its label follows the same naming rules as
+    // template files (prefix hiding + variable substitution); an invalid or
+    // empty resulting name is skipped. Opening it navigates TC to the real
+    // templates folder (handled in FsExecuteFileW).
+    if (virtualDir == L"\\" && !cfg.linkName.empty()) {
+        std::wstring linkDisplay =
+            MakeDisplayName(cfg.linkName, cfg.rules, now, std::wstring());
+        if (IsValidEntryName(linkDisplay)) {
+            linkDisplay = MakeUniqueName(linkDisplay, /*isDir=*/false, usedNames);
+
+            VirtualEntry link;
+            link.fd = {};
+            link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+            FILETIME ft;
+            GetSystemTimeAsFileTime(&ft);
+            link.fd.ftCreationTime = link.fd.ftLastAccessTime =
+                link.fd.ftLastWriteTime = ft;
+            wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
+            link.fd.cAlternateFileName[0] = L'\0';
+            link.realPath = cfg.templatesPath; // for the folder icon
+
+            const std::wstring linkVPath = JoinVirtual(L"\\", link.fd.cFileName);
+            {
+                std::lock_guard<std::mutex> lock(g_mapMutex);
+                g_virtualToReal[linkVPath] = link.realPath;
+                g_linkPaths.insert(linkVPath);
+            }
+            out.push_back(std::move(link));
         }
-        usedNames.insert(display);
+    }
 
-        VirtualEntry entry;
-        entry.fd = fd;
-        wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
-        entry.fd.cAlternateFileName[0] = L'\0';
-        // The copy TC creates must be writable even if the template is
-        // marked read-only on disk — New+ copies are ordinary new files.
-        entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
-        entry.realPath = realDir + L"\\" + fd.cFileName;
-
-        // Key the map by the exact name handed back to TC (cFileName, which
-        // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with the
-        // name TC echoes back always matches.
-        {
-            std::lock_guard<std::mutex> lock(g_mapMutex);
-            g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
-        }
-
-        out.push_back(std::move(entry));
-    } while (FindNextFileW(hFind, &fd));
-
-    FindClose(hFind);
     return true;
 }
 
@@ -736,6 +814,22 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
 int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
 {
     if (_wcsicmp(Verb, L"open") == 0) {
+        const std::wstring vpath = NormalizeVirtualPath(RemoteName);
+
+        bool isLink;
+        {
+            std::lock_guard<std::mutex> lock(g_mapMutex);
+            isLink = g_linkPaths.count(vpath) != 0;
+        }
+        if (isLink) {
+            // The templates-folder link: navigate TC straight to the real
+            // folder. FS_EXEC_SYMLINK accepts a local path (drive letter or
+            // UNC) of at most MAX_PATH-1 characters in RemoteName.
+            const std::wstring target = LoadConfig().templatesPath;
+            lstrcpynW(RemoteName, target.c_str(), MAX_PATH);
+            return FS_EXEC_SYMLINK;
+        }
+
         // Let TC download the file to a temporary location and open it there.
         return FS_EXEC_YOURSELF;
     }
@@ -851,9 +945,17 @@ int __stdcall FsGetFile(char* RemoteName, char* LocalName, int CopyFlags,
 
 int __stdcall FsExecuteFile(HWND MainWin, char* RemoteName, char* Verb)
 {
-    std::wstring remote = AnsiToWide(RemoteName);
-    std::wstring verb   = AnsiToWide(Verb);
-    return FsExecuteFileW(MainWin, &remote[0], &verb[0]);
+    // Use a MAX_PATH buffer: FsExecuteFileW may write a redirect path back into
+    // RemoteName for FS_EXEC_SYMLINK (the templates-folder link), which would
+    // overflow a buffer sized to the original name.
+    wchar_t remote[MAX_PATH];
+    lstrcpynW(remote, AnsiToWide(RemoteName).c_str(), MAX_PATH);
+    std::wstring verb = AnsiToWide(Verb);
+
+    int rc = FsExecuteFileW(MainWin, remote, &verb[0]);
+    if (rc == FS_EXEC_SYMLINK)
+        WideCharToMultiByte(CP_ACP, 0, remote, -1, RemoteName, MAX_PATH, nullptr, nullptr);
+    return rc;
 }
 
 int __stdcall FsExtractCustomIcon(char* RemoteName, int ExtractFlags, HICON* TheIcon)
