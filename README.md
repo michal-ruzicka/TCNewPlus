@@ -344,6 +344,15 @@ disk to give them distinct names.
 **`F6` (move) fails.** By design — moving would delete the template. The
 virtual file system is read-only; use `F5` (copy).
 
+**The right-click menu shows Print / Rename / Move / Delete.** That menu is
+built by Total Commander and the Windows shell, not by the plugin — the
+file-system-plugin interface has no hook to add or remove individual
+context-menu items. They are harmless here: the plugin exposes no
+rename/move/delete operations (it doesn't export those functions), so they
+cannot change your templates — manage templates in the real folder on disk
+(see [Managing Templates](#managing-templates)). Hiding the Windows shell
+verbs is a Total Commander configuration choice, independent of this plugin.
+
 **I navigated to a path under `\\\TCNewPlus` that doesn't exist and got an
 empty panel.** That is intentional: a non-existent sub-path shows an empty
 listing so the panel stays inside the plugin instead of jumping back to a
