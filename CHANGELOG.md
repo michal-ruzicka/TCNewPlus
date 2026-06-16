@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v1.0.0] – 2026-06-16
 
-First working release.
+First public release.
 
 ### Added
 
@@ -59,8 +59,11 @@ First working release.
   plus end-to-end tests driving the built DLL through the WFX API; run
   for both bitnesses by `build.cmd` and the CI workflow.
 - **Reproducible build pipeline** mirroring TCOfficeView: pinned MSVC
-  toolchain (`cl.exe 19.51.36246`, toolset `14.51`, SDK `10.0.26100.0`),
+  toolchain (`cl.exe 19.51.36247`, toolset `14.51`, SDK `10.0.26100.0`),
   `/Brepro` + `/BREPRO` + `/pathmap`, normalized timestamps and line
   endings in the ZIP, `sha256sums.sha256` manifest, GitHub Actions CI
   with SHA-pinned actions, and `setup-build-environment-example.cmd` for
   clean-room verification builds.
+
+
+[v1.0.0]: https://github.com/michal-ruzicka/TCNewPlus/releases/tag/v1.0.0
