@@ -3,5 +3,5 @@ type=wfx
 file=TCNewPlus.wfx
 description=New+ style file and folder templates for Total Commander. Opens a read-only virtual file system (\\\TCNewPlus) listing your template files with PowerToys New+ naming rules applied: sorting prefixes (leading digits, spaces and dots) are hidden and filename variables ($YYYY, $MM, $DD, $hh, $mm, $ss, $PARENT_FOLDER_NAME, %USERNAME%, ...) are replaced with the current date and time. Copy a template out with F5 to create a new file or folder under the substituted name.
 defaultdir=TCNewPlus
-version=1.2.0-devel
+version=1.2.0
 release-date=2026-06-17
