@@ -309,10 +309,13 @@ filesystem dependencies, and are linked into both the plugin DLL and
 User-facing troubleshooting lives in [README.md](README.md#troubleshooting);
 the developer-level notes live here.
 
-**Inspect the mapping.** `Alt+Enter` (Properties) on any virtual entry
-shows the virtual name, the real template path it maps to, and the active
-templates folder — the fastest way to see why a particular entry looks
-the way it does.
+**Inspect the mapping and the effective config.** `Alt+Enter` (Properties)
+on any virtual entry shows the virtual name, the real template path it maps
+to, **which INI file is actually in effect** (whether it exists), and the
+parsed value of every setting — the fastest way to see why a particular
+entry looks the way it does, and in particular to catch a per-user
+`%APPDATA%\GHISLER\TCNewPlus.ini` silently shadowing the plugin-dir INI so an
+edit to the wrong file appears to do nothing.
 
 **Config not taking effect?** `TCNewPlus.ini` is looked up first at
 `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override) and then next to the

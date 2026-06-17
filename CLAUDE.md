@@ -32,9 +32,14 @@ Consequences worth remembering before "fixing" them:
 - **Panel sort order is TC's.** We cannot impose the New+ prefix order on
   TC's panel; with `HideStartingDigits=1` the prefixes are gone before TC
   sorts. This is documented as a difference, not a bug.
-- **Displayed names are snapshots** of the listing moment. `Ctrl+R`
-  re-substitutes. Do not try to re-substitute inside `FsGetFileW` — the
-  target name was already fixed by TC.
+- **One snapshot per listing drives everything.** `EnumerateVirtualDir`
+  captures a `Snapshot` (local time + environment block) per refresh, uses it
+  to substitute names, and stores it per virtual path in `g_snapshots`.
+  `FsGetFileW` looks the snapshot back up (`SnapshotFor`) so the file's
+  *content* substitution and *copy timestamps* use the SAME instant and the
+  SAME env values as its name — even if the clock ticked or a system variable
+  changed between listing and copy. `Ctrl+R` re-snapshots. Do not re-substitute
+  the name inside `FsGetFileW` — TC already fixed the target name.
 
 ## Repo layout
 
@@ -106,10 +111,16 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   (`[FileContents] ReplaceContentVariables`, empty by default — a
   comma-separated extension list, not a boolean). `CopyExpanded` in
   `FsGetFileW` reads the file as UTF-8
-  (BOM preserved), expands with copy-time `GetLocalTime`, and writes UTF-8;
-  a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the raw
-  byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
+  (BOM preserved), expands with the listing **snapshot** (`snap->localTime`
+  and `SnapshotEnv(snap)`, NOT a fresh `GetLocalTime`/live env), and writes
+  UTF-8; a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the
+  raw byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
   TCNewPlus extension — New+ only substitutes in names.
+- **`NameSubstitution` no longer reads the live environment.** `%VAR%` goes
+  through an injected `EnvLookup` so the plugin can pass a snapshot of the
+  environment; the unit test passes a live-env lookup, the plugin passes
+  `SnapshotEnv`. Keep it that way — a live `GetEnvironmentVariableW` inside the
+  substitution would defeat the snapshot.
 - **Empty-directory contract:** `FsFindFirstW` returns
   `INVALID_HANDLE_VALUE` with `SetLastError(ERROR_NO_MORE_FILES)` for an
   empty dir and `ERROR_PATH_NOT_FOUND` for a missing root; TC distinguishes
@@ -140,6 +151,28 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   `MakeDisplayName` and is validated with `IsValidEntryName`. The ANSI
   `FsExecuteFile` wrapper copies the redirect path back into its caller
   buffer (needs `MAX_PATH`).
+- **Timestamps** default to the template's real file times. With
+  `[Templates] SetTimestampsToCurrentTime=1`, `EnumerateVirtualDir` stamps every
+  entry's fd times with one `GetSystemTimeAsFileTime` snapshot (taken next to the
+  `GetLocalTime` used for name substitution, so panel times match the dates in
+  names). The link entry follows the flag too; with it off the link mirrors the
+  templates folder's own times (`GetFileAttributesExW`). A copied-out file is
+  stamped to **match what the panel shows**: `FsGetFileW` calls
+  `ResolveCopyTimes` (current time when the flag is on, else the source file's
+  times via `GetFileAttributesExW`) and `StampFile` applies it in both the
+  streaming and `CopyExpanded` paths. (This replaced the old always-current-time
+  `StampNow` "new document" behaviour.)
+- **`UseTimestampsToIndicateOrdering`** implies `SetTimestampsToCurrentTime`
+  and, after a directory's entries are built, stable-sorts them by real name
+  (`StrCmpLogicalW`, the New+/Explorer natural order, link entry included by its
+  raw label) and steps each displayed modification time one second earlier per
+  position — subtract only, never into the future. **Display only**: the maps
+  and name/content substitution use the un-stepped snapshot, and
+  `ResolveCopyTimes` ignores this flag entirely — copy timestamps are governed
+  solely by `setTimestampsToCurrentTime` (so ordering-on + SetTimestamps-off
+  copies keep the template's real times). Sorting the panel by modification
+  time then reproduces the prefix order the plugin otherwise cannot impose.
+  Per directory.
 - **Only the root and real subfolders are listable.** A non-resolvable path
   (a file path, the link entry opened as a folder, or a typed non-existent
   name) is never given a bogus success. `FsFindFirstW` reports a failing

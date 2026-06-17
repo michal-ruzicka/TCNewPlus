@@ -25,6 +25,7 @@
 #pragma once
 
 #include <windows.h>
+#include <functional>
 #include <string>
 
 // Display/creation rules; both default to the plugin's defaults.
@@ -32,6 +33,14 @@ struct NameRules {
     bool replaceVariables   = true;
     bool hideStartingDigits = true;
 };
+
+// Looks up an environment variable by name (case-insensitive). Returns true
+// and sets `value` when defined. Passing the lookup (instead of reading the
+// live environment here) lets the caller supply a *snapshot* taken at listing
+// time, so a `%VAR%` resolves to the same value in a file's name and in its
+// contents even if the system variable changes between listing and copy. A
+// default-constructed (empty) lookup treats every variable as undefined.
+using EnvLookup = std::function<bool(const std::wstring& name, std::wstring& value)>;
 
 // Removes the leading sorting prefix (digits, spaces and dots). If stripping
 // would consume the entire name, the original name is returned unchanged.
@@ -42,6 +51,9 @@ std::wstring StripSortingPrefix(const std::wstring& name);
 // level — no template subfolder above), the token is left in place verbatim,
 // matching the New+ documentation ("only works in template subfolders").
 //
+// `env` resolves `%VAR%` tokens (an undefined or unset variable is left
+// verbatim, ExpandEnvironmentStrings-style).
+//
 // `sanitizeInvalidChars` controls whether substituted values have
 // filesystem-invalid characters (\ / : * ? " < > |) replaced by spaces.
 // Pass true when building a filename (the default, New+ behaviour); pass
@@ -50,6 +62,7 @@ std::wstring StripSortingPrefix(const std::wstring& name);
 std::wstring ReplaceTemplateVariables(const std::wstring& text,
                                       const SYSTEMTIME&   localTime,
                                       const std::wstring& parentFolderName,
+                                      const EnvLookup&    env = {},
                                       bool                sanitizeInvalidChars = true);
 
 // Full pipeline: optional prefix strip, optional variable replacement, and a
@@ -59,4 +72,5 @@ std::wstring ReplaceTemplateVariables(const std::wstring& text,
 std::wstring MakeDisplayName(const std::wstring& templateName,
                              const NameRules&    rules,
                              const SYSTEMTIME&   localTime,
-                             const std::wstring& parentFolderName);
+                             const std::wstring& parentFolderName,
+                             const EnvLookup&    env = {});

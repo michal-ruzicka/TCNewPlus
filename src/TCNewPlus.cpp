@@ -33,15 +33,19 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shlwapi.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
 
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -71,9 +75,71 @@ static std::mutex g_mapMutex;
 // templates directory rather than copying a file. Guarded by g_mapMutex.
 static std::set<std::wstring, CaseInsensitiveLess> g_linkPaths;
 
+// A snapshot of the moment a directory was listed (refreshed): the local time,
+// the same as a FILETIME, and the environment block. The same snapshot drives
+// name substitution AND, later, the file's content substitution and copy
+// timestamps, so every value stays consistent even if the clock ticks or a
+// system variable changes between the listing and the copy.
+struct Snapshot {
+    SYSTEMTIME localTime{};
+    FILETIME   fileTime{};
+    std::map<std::wstring, std::wstring, CaseInsensitiveLess> env;
+};
+
+// Virtual path -> the snapshot taken when it was last listed. Grows/overwrites
+// like g_virtualToReal; snapshot objects are shared per listing. Guarded by
+// g_mapMutex.
+static std::map<std::wstring, std::shared_ptr<Snapshot>, CaseInsensitiveLess> g_snapshots;
+
+// Captures the current local time and environment block.
+static std::shared_ptr<Snapshot> CaptureSnapshot()
+{
+    auto s = std::make_shared<Snapshot>();
+    GetLocalTime(&s->localTime);
+    GetSystemTimeAsFileTime(&s->fileTime);
+    if (LPWCH block = GetEnvironmentStringsW()) {
+        for (LPWCH p = block; *p; ) {
+            std::wstring entry(p);
+            p += entry.size() + 1;
+            // Skip the special "=C:=..." drive entries (leading '=').
+            size_t eq = entry.find(L'=');
+            if (eq != std::wstring::npos && eq != 0)
+                s->env.emplace(entry.substr(0, eq), entry.substr(eq + 1));
+        }
+        FreeEnvironmentStringsW(block);
+    }
+    return s;
+}
+
+// Builds an EnvLookup backed by a snapshot's captured environment.
+static EnvLookup SnapshotEnv(const std::shared_ptr<Snapshot>& snap)
+{
+    return [snap](const std::wstring& name, std::wstring& value) -> bool {
+        auto it = snap->env.find(name);
+        if (it == snap->env.end())
+            return false;
+        value = it->second;
+        return true;
+    };
+}
+
+// Returns the snapshot stored for `vpath`, or a fresh one if the path was never
+// listed in this session (best effort — keeps a copy working).
+static std::shared_ptr<Snapshot> SnapshotFor(const std::wstring& vpath)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_mapMutex);
+        auto it = g_snapshots.find(vpath);
+        if (it != g_snapshots.end())
+            return it->second;
+    }
+    return CaptureSnapshot();
+}
+
 struct VirtualEntry {
     WIN32_FIND_DATAW fd;       // cFileName already holds the display name
     std::wstring     realPath;
+    std::wstring     sortKey;  // raw template name (with prefix) for ordering
 };
 
 struct FindContext {
@@ -94,6 +160,19 @@ struct Config {
     // Label for an extra root entry that links to the real templates folder
     // (ShowLinkToTemplatesDir). Empty = no link entry shown.
     std::wstring linkName;
+    // When true, displayed entries carry the current time instead of their
+    // template's real timestamps — consistent with date variables in names.
+    bool setTimestampsToCurrentTime = false;
+    // When true, implies setTimestampsToCurrentTime AND steps each displayed
+    // modification time one second earlier per entry (in real-name order, per
+    // directory), so sorting the panel by modification time reproduces the
+    // prefix ordering. Display only — substitution and copy times use the
+    // snapshot instant unchanged.
+    bool useTimestampsToIndicateOrdering = false;
+    // The INI file actually consulted, and whether it existed on disk (for the
+    // Alt+Enter properties / diagnostics).
+    std::wstring iniPath;
+    bool         iniExists = false;
 };
 
 // Splits a comma/semicolon-separated extension list into a set, trimming
@@ -308,6 +387,8 @@ static Config LoadConfig()
          GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
             ? userIni
             : dir + L"\\TCNewPlus.ini";
+    cfg.iniPath   = iniPath;
+    cfg.iniExists = GetFileAttributesW(iniPath.c_str()) != INVALID_FILE_ATTRIBUTES;
 
     const std::wstring ini = ReadTextFileToWide(iniPath);
 
@@ -329,6 +410,11 @@ static Config LoadConfig()
     // IniLookup already trims the value; an absent key or empty value leaves
     // linkName empty, which disables the templates-folder link entry.
     IniLookup(ini, L"Templates", L"ShowLinkToTemplatesDir", cfg.linkName);
+
+    cfg.setTimestampsToCurrentTime =
+        IniLookupBool(ini, L"Templates", L"SetTimestampsToCurrentTime", false);
+    cfg.useTimestampsToIndicateOrdering =
+        IniLookupBool(ini, L"Templates", L"UseTimestampsToIndicateOrdering", false);
 
     return cfg;
 }
@@ -470,10 +556,17 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     if (hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND)
         return false;
 
-    // One time snapshot per directory listing so all names in the panel
-    // carry the same timestamp.
-    SYSTEMTIME now;
-    GetLocalTime(&now);
+    // One snapshot per directory listing: every name (and, when enabled, every
+    // displayed time) uses it, and it is stored per entry so the later copy of
+    // that entry expands its contents and stamps its times from the SAME
+    // moment — even if the clock or a system variable changed in between.
+    const std::shared_ptr<Snapshot> snap = CaptureSnapshot();
+    const EnvLookup env = SnapshotEnv(snap);
+
+    // UseTimestampsToIndicateOrdering implies the current-time display, and
+    // additionally steps the times per entry below.
+    const bool currentTimeDisplay =
+        cfg.setTimestampsToCurrentTime || cfg.useTimestampsToIndicateOrdering;
 
     // $PARENT_FOLDER_NAME inside a template subfolder expands to the
     // (already substituted) display name of that subfolder; empty at root.
@@ -489,24 +582,30 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
             const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             std::wstring display = MakeUniqueName(
-                MakeDisplayName(fd.cFileName, cfg.rules, now, parentName),
+                MakeDisplayName(fd.cFileName, cfg.rules, snap->localTime, parentName, env),
                 isDir, usedNames);
 
             VirtualEntry entry;
             entry.fd = fd;
+            entry.sortKey = fd.cFileName; // real name, with prefix, for ordering
             wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
             entry.fd.cAlternateFileName[0] = L'\0';
             // The copy TC creates must be writable even if the template is
             // marked read-only on disk — New+ copies are ordinary new files.
             entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+            if (currentTimeDisplay)
+                entry.fd.ftCreationTime = entry.fd.ftLastAccessTime =
+                    entry.fd.ftLastWriteTime = snap->fileTime;
             entry.realPath = realDir + L"\\" + fd.cFileName;
 
-            // Key the map by the exact name handed back to TC (cFileName, which
+            // Key the maps by the exact name handed back to TC (cFileName, which
             // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with
             // the name TC echoes back always matches.
             {
                 std::lock_guard<std::mutex> lock(g_mapMutex);
-                g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
+                const std::wstring key = JoinVirtual(virtualDir, entry.fd.cFileName);
+                g_virtualToReal[key] = entry.realPath;
+                g_snapshots[key] = snap;
             }
 
             out.push_back(std::move(entry));
@@ -522,17 +621,27 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     // templates folder (handled in FsExecuteFileW).
     if (virtualDir == L"\\" && !cfg.linkName.empty()) {
         std::wstring linkDisplay =
-            MakeDisplayName(cfg.linkName, cfg.rules, now, std::wstring());
+            MakeDisplayName(cfg.linkName, cfg.rules, snap->localTime, std::wstring(), env);
         if (IsValidEntryName(linkDisplay)) {
             linkDisplay = MakeUniqueName(linkDisplay, /*isDir=*/false, usedNames);
 
             VirtualEntry link;
             link.fd = {};
             link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-            FILETIME ft;
-            GetSystemTimeAsFileTime(&ft);
-            link.fd.ftCreationTime = link.fd.ftLastAccessTime =
-                link.fd.ftLastWriteTime = ft;
+            link.sortKey = cfg.linkName; // raw label (with prefix) for ordering
+            // Timestamps: the snapshot time under the current-time display;
+            // otherwise mirror the link's target (the templates folder).
+            WIN32_FILE_ATTRIBUTE_DATA ad;
+            if (!currentTimeDisplay &&
+                GetFileAttributesExW(cfg.templatesPath.c_str(),
+                                     GetFileExInfoStandard, &ad)) {
+                link.fd.ftCreationTime   = ad.ftCreationTime;
+                link.fd.ftLastAccessTime = ad.ftLastAccessTime;
+                link.fd.ftLastWriteTime  = ad.ftLastWriteTime;
+            } else {
+                link.fd.ftCreationTime = link.fd.ftLastAccessTime =
+                    link.fd.ftLastWriteTime = snap->fileTime;
+            }
             wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
             link.fd.cAlternateFileName[0] = L'\0';
 
@@ -548,6 +657,30 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                 g_linkPaths.insert(linkVPath);
             }
             out.push_back(std::move(link));
+        }
+    }
+
+    // UseTimestampsToIndicateOrdering: order entries by their real name (with
+    // prefix, natural/Explorer-style sort, same as the New+ menu) and step the
+    // displayed modification time one second earlier per position. Sorting the
+    // panel by modification time then reproduces that order. We subtract (never
+    // add) so the times never land in the future. Display only — the maps,
+    // names and copy times keep the snapshot instant.
+    if (cfg.useTimestampsToIndicateOrdering && !out.empty()) {
+        std::stable_sort(out.begin(), out.end(),
+                         [](const VirtualEntry& a, const VirtualEntry& b) {
+                             return StrCmpLogicalW(a.sortKey.c_str(),
+                                                   b.sortKey.c_str()) < 0;
+                         });
+        ULONGLONG base = (static_cast<ULONGLONG>(snap->fileTime.dwHighDateTime) << 32) |
+                         snap->fileTime.dwLowDateTime;
+        for (size_t i = 0; i < out.size(); ++i) {
+            ULONGLONG t = base - static_cast<ULONGLONG>(i) * 10000000ULL; // i seconds
+            FILETIME ft;
+            ft.dwLowDateTime  = static_cast<DWORD>(t & 0xFFFFFFFFULL);
+            ft.dwHighDateTime = static_cast<DWORD>(t >> 32);
+            out[i].fd.ftCreationTime = out[i].fd.ftLastAccessTime =
+                out[i].fd.ftLastWriteTime = ft;
         }
     }
 
@@ -642,13 +775,38 @@ int __stdcall FsFindClose(HANDLE Hdl)
 // the file.
 static const int FS_RAW_FALLBACK = -1;
 
-static void StampNow(HANDLE hFile)
+struct CopyTimes {
+    FILETIME create{};
+    FILETIME access{};
+    FILETIME write{};
+};
+
+// The timestamps a copied-out file should carry so it matches what the panel
+// shows for the entry: the listing snapshot's time when SetTimestampsToCurrent
+// Time is on, otherwise the template file's own times.
+static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cfg,
+                                  const std::shared_ptr<Snapshot>& snap)
 {
-    // "New document" semantics: the copy is a brand-new file created now, not
-    // a clone of the template's timestamps.
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    SetFileTime(hFile, &now, &now, &now);
+    // Copy timestamps are governed SOLELY by SetTimestampsToCurrentTime. The
+    // UseTimestampsToIndicateOrdering steps are a display-only sorting aid and
+    // must not leak into created files — with SetTimestampsToCurrentTime off, a
+    // copy keeps the template's real times even when ordering is on.
+    CopyTimes t;
+    WIN32_FILE_ATTRIBUTE_DATA ad;
+    if (!cfg.setTimestampsToCurrentTime &&
+        GetFileAttributesExW(realPath.c_str(), GetFileExInfoStandard, &ad)) {
+        t.create = ad.ftCreationTime;
+        t.access = ad.ftLastAccessTime;
+        t.write  = ad.ftLastWriteTime;
+    } else {
+        t.create = t.access = t.write = snap->fileTime;
+    }
+    return t;
+}
+
+static void StampFile(HANDLE hFile, const CopyTimes& t)
+{
+    SetFileTime(hFile, &t.create, &t.access, &t.write);
 }
 
 // Copies `realPath` to `localName` while expanding New+ variables in its
@@ -658,7 +816,9 @@ static void StampNow(HANDLE hFile)
 // FS_FILE_* code, or FS_RAW_FALLBACK when the content is not valid UTF-8.
 static int CopyExpanded(const std::wstring& realPath,
                         const std::wstring& localName,
-                        const std::wstring& parentName)
+                        const std::wstring& parentName,
+                        const CopyTimes&    times,
+                        const std::shared_ptr<Snapshot>& snap)
 {
     HANDLE hSrc = CreateFileW(realPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -693,9 +853,8 @@ static int CopyExpanded(const std::wstring& realPath,
         MultiByteToWideChar(CP_UTF8, 0, textPtr, textLen, &wide[0], wlen);
     }
 
-    SYSTEMTIME now;
-    GetLocalTime(&now);
-    std::wstring expanded = ReplaceTemplateVariables(wide, now, parentName, false);
+    std::wstring expanded = ReplaceTemplateVariables(
+        wide, snap->localTime, parentName, SnapshotEnv(snap), false);
 
     std::string out;
     if (hasBom)
@@ -722,7 +881,7 @@ static int CopyExpanded(const std::wstring& realPath,
         writeOk = WriteFile(hDst, out.data(), static_cast<DWORD>(out.size()),
                             &put, nullptr) && put == out.size();
     }
-    StampNow(hDst);
+    StampFile(hDst, times);
     CloseHandle(hDst);
 
     if (!writeOk) {
@@ -760,6 +919,16 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (ProgressAborted(RemoteName, LocalName, 0))
         return FS_FILE_USERABORT;
 
+    // Use the snapshot taken when this entry was listed, so the content
+    // substitution and the copy's timestamps match the name TC already fixed at
+    // listing time (same clock instant, same environment values).
+    const std::shared_ptr<Snapshot> snap = SnapshotFor(vpath);
+
+    // The created file carries the same timestamps the panel shows for the
+    // entry (template's real times by default, the snapshot time when
+    // SetTimestampsToCurrentTime is on).
+    const CopyTimes copyTimes = ResolveCopyTimes(realPath, cfg, snap);
+
     // Expand New+ variables inside the content for configured extensions.
     // $PARENT_FOLDER_NAME uses the (already substituted) display name of the
     // immediate parent folder; empty at the plugin root.
@@ -767,7 +936,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
         const std::wstring parentDir = VirtualParent(vpath);
         const std::wstring parentName =
             (parentDir == L"\\") ? std::wstring() : VirtualLeaf(parentDir);
-        int r = CopyExpanded(realPath, LocalName, parentName);
+        int r = CopyExpanded(realPath, LocalName, parentName, copyTimes, snap);
         if (r != FS_RAW_FALLBACK) {
             if (r == FS_FILE_OK)
                 ProgressAborted(RemoteName, LocalName, 100);
@@ -824,7 +993,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     }
 
     if (result == FS_FILE_OK)
-        StampNow(hDst);
+        StampFile(hDst, copyTimes);
 
     CloseHandle(hSrc);
     CloseHandle(hDst);
@@ -860,10 +1029,28 @@ int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
         const Config cfg = LoadConfig();
         const std::wstring realPath = ResolveRealPath(vpath, cfg);
 
-        std::wstring text = L"Virtual name:\n" + vpath +
-                            L"\n\nTemplate source:\n" +
-                            (realPath.empty() ? L"(not found)" : realPath) +
-                            L"\n\nTemplates folder:\n" + cfg.templatesPath;
+        auto onOff = [](bool b) -> std::wstring { return b ? L"on" : L"off"; };
+        std::wstring exts;
+        for (const auto& e : cfg.expandExtensions)
+            exts += (exts.empty() ? L"" : L",") + e;
+
+        std::wstring text =
+            L"Virtual name:\n" + vpath +
+            L"\n\nTemplate source:\n" +
+            (realPath.empty() ? L"(not found)" : realPath) +
+            L"\n\nActive config file" +
+            (cfg.iniExists ? L":\n" : L" (does not exist, using defaults):\n") +
+            cfg.iniPath +
+            L"\n\nSettings in effect:" +
+            L"\n  TemplatesPath = " + cfg.templatesPath +
+            L"\n  ReplaceFilenameVariables = " + onOff(cfg.rules.replaceVariables) +
+            L"\n  HideStartingDigits = " + onOff(cfg.rules.hideStartingDigits) +
+            L"\n  ReplaceContentVariables = " + (exts.empty() ? L"(none)" : exts) +
+            L"\n  ShowLinkToTemplatesDir = " +
+            (cfg.linkName.empty() ? L"(none)" : cfg.linkName) +
+            L"\n  SetTimestampsToCurrentTime = " + onOff(cfg.setTimestampsToCurrentTime) +
+            L"\n  UseTimestampsToIndicateOrdering = " +
+            onOff(cfg.useTimestampsToIndicateOrdering);
         MessageBoxW(MainWin, text.c_str(), L"TCNewPlus", MB_OK | MB_ICONINFORMATION);
         return FS_EXEC_OK;
     }

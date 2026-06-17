@@ -127,6 +127,19 @@ static void TestDateTimeVariables()
             L"$Q $", "unknown token and trailing $ stay literal");
 }
 
+// An EnvLookup over the live process environment, for the unit tests.
+static bool LiveEnv(const std::wstring& name, std::wstring& value)
+{
+    DWORD n = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
+    if (n == 0)
+        return false;
+    std::wstring v(n, L'\0');
+    DWORD w = GetEnvironmentVariableW(name.c_str(), &v[0], n);
+    v.resize(w);
+    value = v;
+    return true;
+}
+
 static void TestSpecialAndEnvironmentVariables()
 {
     const SYSTEMTIME st = FixedTime();
@@ -138,22 +151,22 @@ static void TestSpecialAndEnvironmentVariables()
             L"$PARENT_FOLDER_NAME.md", "$PARENT_FOLDER_NAME at root stays");
 
     SetEnvironmentVariableW(L"TCNP_TEST_VALUE", L"plain");
-    CheckEq(ReplaceTemplateVariables(L"by %TCNP_TEST_VALUE%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"by %TCNP_TEST_VALUE%", st, L"", LiveEnv),
             L"by plain", "environment variable");
-    CheckEq(ReplaceTemplateVariables(L"by %tcnp_test_value%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"by %tcnp_test_value%", st, L"", LiveEnv),
             L"by plain", "environment variable is case-insensitive");
 
     SetEnvironmentVariableW(L"TCNP_TEST_INVALID", L"a<b>c:d");
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", LiveEnv),
             L"a b c d", "invalid filename chars become spaces");
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", false),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", LiveEnv, false),
             L"a<b>c:d", "content mode keeps filename-invalid chars verbatim");
-    CheckEq(ReplaceTemplateVariables(L"$PARENT_FOLDER_NAME", st, L"a:b", false),
+    CheckEq(ReplaceTemplateVariables(L"$PARENT_FOLDER_NAME", st, L"a:b", LiveEnv, false),
             L"a:b", "content mode keeps invalid chars in $PARENT_FOLDER_NAME");
 
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_UNDEFINED% x", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_UNDEFINED% x", st, L"", LiveEnv),
             L"%TCNP_TEST_UNDEFINED% x", "undefined variable stays verbatim");
-    CheckEq(ReplaceTemplateVariables(L"100% done", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"100% done", st, L"", LiveEnv),
             L"100% done", "lone percent sign stays literal");
 
     SetEnvironmentVariableW(L"TCNP_TEST_VALUE", nullptr);
@@ -180,7 +193,7 @@ static void TestMakeDisplayName()
             L"1. Note $YYYY.txt", "verbatim when both rules disabled");
 
     SetEnvironmentVariableW(L"TCNP_TEST_TRAIL", L"x|");
-    CheckEq(MakeDisplayName(L"Name %TCNP_TEST_TRAIL%", rules, st, L""),
+    CheckEq(MakeDisplayName(L"Name %TCNP_TEST_TRAIL%", rules, st, L"", LiveEnv),
             L"Name x", "trailing sanitised space trimmed");
     SetEnvironmentVariableW(L"TCNP_TEST_TRAIL", nullptr);
 }
@@ -429,6 +442,9 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"C:\\tmp\\x");
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L".md",
                                ini.c_str());
+    // Re-list so the snapshot used at copy time captures the env and config set
+    // above (content expansion uses the snapshot taken when the entry was listed).
+    ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
 
     std::wstring varRemote = L"\\Vars " + year + L".md";
     std::wstring varLocal  = outDir + L"\\Vars.md";
@@ -449,6 +465,25 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     rc = fsGetFileW(&noteRemote[0], &noteLocal[0], 0, nullptr);
     Check(rc == FS_FILE_OK && ReadTextFile(noteLocal) == "note",
           ".txt copied verbatim when only .md expansion is enabled");
+
+    // Environment snapshot: a %VAR% in content keeps the value captured at
+    // LISTING time even if the system variable changes before the copy.
+    {
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"AAA");
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"[FileContents]\r\nReplaceContentVariables=.md\r\n");
+        ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\"); // snapshot AAA
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"BBB");          // changes later
+
+        std::wstring snapLocal = outDir + L"\\snap.md";
+        rc = fsGetFileW(&varRemote[0], &snapLocal[0], 0, nullptr);
+        std::string snapBody = ReadTextFile(snapLocal);
+        Check(rc == FS_FILE_OK
+                  && snapBody.find("U=AAA") != std::string::npos
+                  && snapBody.find("BBB") == std::string::npos,
+              "content uses the env value captured at listing, not a later one");
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
+    }
 
     // Remove the key so later sections see the default (no expansion).
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", nullptr,
@@ -545,6 +580,140 @@ static void RunEndToEndTests(const wchar_t* dllPath)
               "empty ShowLinkToTemplatesDir shows no link entry");
         Check(ContainsName(noLink, L"Plain.txt"),
               "normal entries still listed when the link is disabled");
+    }
+
+    // --- SetTimestampsToCurrentTime ----------------------------------------
+    {
+        auto findEntry = [](std::vector<WIN32_FIND_DATAW>& v,
+                            const std::wstring& name) -> WIN32_FIND_DATAW* {
+            for (auto& fd : v)
+                if (name == fd.cFileName)
+                    return &fd;
+            return nullptr;
+        };
+
+        // Give a template a known, old timestamp.
+        FILETIME oldFt = {};
+        SYSTEMTIME oldSt = {};
+        oldSt.wYear = 2020; oldSt.wMonth = 1; oldSt.wDay = 1;
+        SystemTimeToFileTime(&oldSt, &oldFt);
+        {
+            HANDLE h = CreateFileW((templates + L"\\1. Plain.txt").c_str(),
+                                   FILE_WRITE_ATTRIBUTES,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                SetFileTime(h, &oldFt, &oldFt, &oldFt);
+                CloseHandle(h);
+            }
+        }
+
+        auto lastWriteOf = [](const std::wstring& path, FILETIME& out) -> bool {
+            WIN32_FILE_ATTRIBUTE_DATA ad;
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &ad))
+                return false;
+            out = ad.ftLastWriteTime;
+            return true;
+        };
+
+        // Off (default): the displayed time is the template's real timestamp,
+        // and a copied-out file keeps that same (old) timestamp.
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n");
+        auto defList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        WIN32_FIND_DATAW* e1 = findEntry(defList, L"Plain.txt");
+        Check(e1 && CompareFileTime(&e1->ftLastWriteTime, &oldFt) == 0,
+              "default keeps the template's real timestamp");
+
+        std::wstring tsRemote   = L"\\Plain.txt";
+        std::wstring tsLocalOff = outDir + L"\\ts-off.txt";
+        rc = fsGetFileW(&tsRemote[0], &tsLocalOff[0], 0, nullptr);
+        FILETIME copyOff;
+        Check(rc == FS_FILE_OK && lastWriteOf(tsLocalOff, copyOff)
+                  && CompareFileTime(&copyOff, &oldFt) == 0,
+              "copied file keeps the template's timestamp (option off)");
+
+        // On: every entry (including the link) carries the current time, and a
+        // copied-out file gets the current time too.
+        FILETIME before;
+        GetSystemTimeAsFileTime(&before);
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"ShowLinkToTemplatesDir=Open\r\n"
+                           L"SetTimestampsToCurrentTime=1\r\n");
+        auto onList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+
+        WIN32_FIND_DATAW* e2 = findEntry(onList, L"Plain.txt");
+        WIN32_FIND_DATAW* lk = findEntry(onList, L"Open");
+
+        std::wstring tsLocalOn = outDir + L"\\ts-on.txt";
+        rc = fsGetFileW(&tsRemote[0], &tsLocalOn[0], 0, nullptr);
+        FILETIME after, copyOn;
+        GetSystemTimeAsFileTime(&after);
+
+        Check(e2 && CompareFileTime(&e2->ftLastWriteTime, &before) >= 0
+                 && CompareFileTime(&e2->ftLastWriteTime, &after) <= 0,
+              "SetTimestampsToCurrentTime shows the current time on files");
+        Check(lk && CompareFileTime(&lk->ftLastWriteTime, &before) >= 0
+                 && CompareFileTime(&lk->ftLastWriteTime, &after) <= 0,
+              "SetTimestampsToCurrentTime applies to the link entry too");
+        Check(rc == FS_FILE_OK && lastWriteOf(tsLocalOn, copyOn)
+                  && CompareFileTime(&copyOn, &before) >= 0
+                  && CompareFileTime(&copyOn, &after) <= 0,
+              "copied file gets the current time (option on)");
+    }
+
+    // --- UseTimestampsToIndicateOrdering -----------------------------------
+    {
+        auto findEntry = [](std::vector<WIN32_FIND_DATAW>& v,
+                            const std::wstring& name) -> WIN32_FIND_DATAW* {
+            for (auto& fd : v)
+                if (name == fd.cFileName)
+                    return &fd;
+            return nullptr;
+        };
+        auto toU = [](const FILETIME& ft) {
+            return (static_cast<ULONGLONG>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        };
+        const ULONGLONG oneSecond = 10000000ULL; // 100-ns units
+
+        FILETIME before;
+        GetSystemTimeAsFileTime(&before);
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"UseTimestampsToIndicateOrdering=1\r\n");
+        auto ord = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        FILETIME after;
+        GetSystemTimeAsFileTime(&after);
+
+        // Real names "1. Plain.txt" < "2. Note ..." < ... < "6. Vars ..." set the
+        // order; the displayed modification time steps one second earlier per rank.
+        WIN32_FIND_DATAW* p = findEntry(ord, L"Plain.txt");              // rank 0
+        WIN32_FIND_DATAW* n = findEntry(ord, L"Note " + year + L".txt"); // rank 1
+        WIN32_FIND_DATAW* v = findEntry(ord, L"Vars " + year + L".md");  // rank 5
+        Check(p && n && v, "ordering: entries present");
+
+        Check(p && CompareFileTime(&p->ftLastWriteTime, &before) >= 0
+                && CompareFileTime(&p->ftLastWriteTime, &after) <= 0,
+              "ordering: first entry carries the current time");
+        Check(p && n && toU(p->ftLastWriteTime) - toU(n->ftLastWriteTime) == oneSecond,
+              "ordering: second entry is exactly one second earlier");
+        Check(p && v && toU(p->ftLastWriteTime) - toU(v->ftLastWriteTime) == 5 * oneSecond,
+              "ordering: sixth entry is exactly five seconds earlier");
+
+        // The stepping is display-only and copy timestamps are governed solely
+        // by SetTimestampsToCurrentTime: with it off (here), a copied file keeps
+        // the template file's real times — neither the stepped display time nor
+        // the snapshot.
+        WIN32_FILE_ATTRIBUTE_DATA tmpl;
+        Check(GetFileAttributesExW((templates + L"\\6. Vars $YYYY.md").c_str(),
+                                   GetFileExInfoStandard, &tmpl),
+              "ordering: template file is readable");
+        std::wstring ordRemote = L"\\Vars " + year + L".md";
+        std::wstring ordLocal  = outDir + L"\\ord.md";
+        rc = fsGetFileW(&ordRemote[0], &ordLocal[0], 0, nullptr);
+        WIN32_FILE_ATTRIBUTE_DATA cad;
+        Check(rc == FS_FILE_OK
+                  && GetFileAttributesExW(ordLocal.c_str(), GetFileExInfoStandard, &cad)
+                  && CompareFileTime(&cad.ftLastWriteTime, &tmpl.ftLastWriteTime) == 0,
+              "ordering: copied file keeps the template's real time (copy ignores stepping)");
     }
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------

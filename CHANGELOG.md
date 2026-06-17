@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.2.0] – 2026-06-17
+
+### Added
+
+- **Ordering via modification time** (`[Templates]
+  UseTimestampsToIndicateOrdering`, off by default) — a workaround for the
+  fact that a file-system plugin cannot set the panel's sort order. When on it
+  implies `SetTimestampsToCurrentTime` and steps each entry's displayed
+  modification time one second earlier than the previous one, in the order the
+  templates sort by their real (prefixed) name — the New+ menu order. Sorting
+  `\\\TCNewPlus` by modification time then reproduces that order. Applied per
+  directory and to the `ShowLinkToTemplatesDir` entry; times step only
+  backwards, and the steps affect display only — name/content substitution
+  uses the listing snapshot, and copied-out file timestamps are governed
+  solely by `SetTimestampsToCurrentTime` (so with it off, a copy keeps the
+  template's real times while the panel shows the stepped ordering times).
+- **Optional current-time timestamps** (`[Templates]
+  SetTimestampsToCurrentTime`, off by default). When enabled, every entry
+  under `\\\TCNewPlus` is shown with the current created/modified/accessed
+  time instead of the physical template's, keeping the displayed times
+  consistent with the date/time substituted into names and contents (the
+  templates-folder link is included; otherwise it mirrors the templates
+  folder).
+- **`Alt+Enter` (Properties) now also reports the active configuration** —
+  which `TCNewPlus.ini` is actually in effect (and whether it exists) plus the
+  parsed value of every setting. Makes it obvious when a per-user
+  `%APPDATA%\GHISLER\TCNewPlus.ini` is shadowing the plugin-dir INI, or when a
+  key was put in the wrong section.
+
+### Changed
+
+- **A copied-out file now carries the same timestamps shown for it in the
+  panel** instead of always the current time: the template file's own times
+  by default, or the current time when `SetTimestampsToCurrentTime` is on.
+- **A single snapshot per listing now drives names, contents and timestamps.**
+  On every directory refresh the plugin captures one instant (local time +
+  environment block) and reuses it for that panel: the substituted names, the
+  later substitution inside copied-out file contents, and the copy timestamps
+  all use the same values. Previously contents and timestamps were resolved at
+  copy time, so a `$ss` or a `%VAR%` could differ between a file's name and its
+  contents when the clock ticked or a system variable changed between listing
+  and copy.
+
 ## [v1.1.0] – 2026-06-17
 
 ### Added
@@ -87,5 +130,6 @@ First public release.
   clean-room verification builds.
 
 
+[v1.2.0]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.1.0...v1.2.0
 [v1.1.0]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/michal-ruzicka/TCNewPlus/releases/tag/v1.0.0

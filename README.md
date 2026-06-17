@@ -32,6 +32,8 @@ collection between Explorer's context menu and Total Commander.
 > It is off by default, so the plugin stays a faithful New+ equivalent
 > until you opt in.
 
+![TCNewPlus shown on Markdown template](TCNewPlus.gif)
+
 **Project page:** <https://github.com/michal-ruzicka/TCNewPlus> — source
 code, releases and issue tracker.
 
@@ -222,6 +224,8 @@ characters work — just save the file as UTF-8 (the default in most editors).
 | --- | --- | --- | --- |
 | `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
 | `[Templates]` | `ShowLinkToTemplatesDir` | *(empty)* | Label for an extra entry that opens the real templates folder (see below) |
+| `[Templates]` | `SetTimestampsToCurrentTime` | `0` | Show the current time as the entries' timestamps instead of the template files' real ones |
+| `[Templates]` | `UseTimestampsToIndicateOrdering` | `0` | Step the displayed times by the prefix order so sorting by modification time reproduces it (see below) |
 | `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
 | `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
 | `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
@@ -263,6 +267,51 @@ it. Operations that open a folder *without* "executing" it (for example
 "open in a new tab") do not follow the shortcut — they simply do nothing,
 because there is no virtual folder to descend into.
 
+#### Entry Timestamps
+
+By default each entry in `\\\TCNewPlus` shows the created / modified /
+accessed times of the **physical template** behind it. Set
+`SetTimestampsToCurrentTime=1` (under `[Templates]`) to show the **current
+time** on every entry instead — consistent with the date and time substituted
+into names and contents:
+
+```ini
+[Templates]
+SetTimestampsToCurrentTime=1
+```
+
+A file you create by copying a template out (`F5`) carries the **same
+timestamps it is shown with** in the panel: the current time when this option
+is on, or the template file's own times when it is off (the default).
+
+#### Ordering by Modification Time
+
+A file-system plugin cannot impose its own sort order on Total Commander's
+panel, so the New+ prefix order (`1. `, `2. `, …) is normally lost once the
+prefixes are hidden. `UseTimestampsToIndicateOrdering=1` works around this:
+
+```ini
+[Templates]
+UseTimestampsToIndicateOrdering=1
+```
+
+It implies `SetTimestampsToCurrentTime=1` and additionally sets each entry's
+displayed modification time **one second earlier than the previous one**, in
+the order the templates sort **by their real name** (with the prefix — the
+same order the PowerToys New+ menu uses). Sort the `\\\TCNewPlus` panel by
+modification time (descending) and the entries line up in your intended
+order. The stepping restarts in every subfolder and includes the
+`ShowLinkToTemplatesDir` entry.
+
+Times are only ever stepped *backwards* (never into the future), and the
+steps affect the **display only**. Variable substitution in names and
+contents uses the listing snapshot, while the timestamps written to a
+copied-out file follow `SetTimestampsToCurrentTime` — so with that option off
+(the default), a file you create keeps the **template's real times** even
+though the panel shows the stepped ordering times. (If you keep folder
+templates, turn off TC's *Sort directories separately* option so folders take
+part in the time ordering.)
+
 #### Variable Expansion Inside File Contents
 
 > **Extension beyond PowerToys New+.** This feature does **not** exist
@@ -288,13 +337,47 @@ With the above, copying a `.md` or `.txt` template runs its contents
 through the same substitution as the names — except that characters
 invalid in filenames are **not** replaced with spaces inside content (a
 path from `%USERPROFILE%` keeps its `:` and `\`). `$PARENT_FOLDER_NAME`
-expands to the name of the containing template subfolder; the date and
-time are taken at copy time. Files of any other extension are copied byte
-for byte.
+expands to the name of the containing template subfolder. Files of any
+other extension are copied byte for byte.
+
+The date, time and environment-variable values are captured the moment the
+folder is **listed** (refresh with `Ctrl+R`), and the *same* snapshot is
+reused when you copy the file out — so a `$ss` or a `%VAR%` resolves to the
+identical value in the file's name and in its contents, even if the clock
+ticks or a system variable changes between the listing and the copy.
 
 Listed files are assumed to be **UTF-8** (a leading byte-order mark is
 preserved). A file that turns out not to be valid UTF-8 is copied verbatim
 rather than risk corrupting it.
+
+#### Button on Toolbar and Keyboard Shortcut
+
+A keyboard shortcut that opens the templates in a new tab in the other panel
+can be defined in the **Configuration → Options → Misc.** menu. This example
+uses `Ctrl+N`, as can be seen in the following image.
+
+![TCNewPlus `Ctrl+N` hotkey assignment](doc/hotkey-assignment.png)
+
+The hotkey calls the custom command `em_tcnewplus`, which can be configured in
+the `usercmd.ini` file as shown in the next image.
+
+![Custom `em_tcnewplus` command in `usercmd.ini`](doc/command-definition.png)
+
+Its definition is as follows:
+
+![Custom `em_tcnewplus` command definition](doc/command-parameters.png)
+
+- **Command: `%COMMANDER_EXE%`** — calls Total Commander itself.
+- **Parameters: `/O /T /S /R="\\\TCNewPlus\"`** — opens `\\\TCNewPlus\` in a new
+  tab in the other panel of the running TC instance.
+- **Icon file: `C:\Program Files\Total Commander\plugins\wfx\TCNewPlus\TCNewPlus.wfx64`**
+  — uses the TCNewPlus icon. Adjust the path if your plugin installation
+  directory differs.
+- **Tooltip:** optional — use any description you find useful.
+
+A toolbar button can be added the same way, as shown in the next picture.
+
+![TCNewPlus button on the TC toolbar](doc/toolbar-button.png)
 
 ### Differences from PowerToys New+
 
@@ -361,9 +444,12 @@ template list. The same applies if you "open in a new tab" on the
 templates-folder link entry — use **Enter** on it instead, which follows it
 to the real folder.
 
-**Where does this entry come from?** Press **Alt+Enter** (Properties) on
-any entry to see the real template path on disk and the active templates
-folder.
+**Where does this entry come from? / Why isn't my setting applied?** Press
+**Alt+Enter** (Properties) on any entry to see the real template path on disk,
+the active templates folder, *which* `TCNewPlus.ini` is actually in effect
+(and whether it exists), and the parsed value of every setting. This makes it
+obvious when a per-user `%APPDATA%\GHISLER\TCNewPlus.ini` is shadowing the
+shipped one, or when a key was put in the wrong section.
 
 ## Contributing
 
