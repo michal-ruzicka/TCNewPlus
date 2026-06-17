@@ -573,31 +573,57 @@ static void RunEndToEndTests(const wchar_t* dllPath)
             }
         }
 
-        // Off (default): the displayed time is the template's real timestamp.
+        auto lastWriteOf = [](const std::wstring& path, FILETIME& out) -> bool {
+            WIN32_FILE_ATTRIBUTE_DATA ad;
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &ad))
+                return false;
+            out = ad.ftLastWriteTime;
+            return true;
+        };
+
+        // Off (default): the displayed time is the template's real timestamp,
+        // and a copied-out file keeps that same (old) timestamp.
         WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n");
         auto defList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
         WIN32_FIND_DATAW* e1 = findEntry(defList, L"Plain.txt");
         Check(e1 && CompareFileTime(&e1->ftLastWriteTime, &oldFt) == 0,
               "default keeps the template's real timestamp");
 
-        // On: every entry (including the link) carries the current time.
+        std::wstring tsRemote   = L"\\Plain.txt";
+        std::wstring tsLocalOff = outDir + L"\\ts-off.txt";
+        rc = fsGetFileW(&tsRemote[0], &tsLocalOff[0], 0, nullptr);
+        FILETIME copyOff;
+        Check(rc == FS_FILE_OK && lastWriteOf(tsLocalOff, copyOff)
+                  && CompareFileTime(&copyOff, &oldFt) == 0,
+              "copied file keeps the template's timestamp (option off)");
+
+        // On: every entry (including the link) carries the current time, and a
+        // copied-out file gets the current time too.
         FILETIME before;
         GetSystemTimeAsFileTime(&before);
         WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
                            L"ShowLinkToTemplatesDir=Open\r\n"
                            L"SetTimestampsToCurrentTime=1\r\n");
         auto onList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
-        FILETIME after;
-        GetSystemTimeAsFileTime(&after);
 
         WIN32_FIND_DATAW* e2 = findEntry(onList, L"Plain.txt");
+        WIN32_FIND_DATAW* lk = findEntry(onList, L"Open");
+
+        std::wstring tsLocalOn = outDir + L"\\ts-on.txt";
+        rc = fsGetFileW(&tsRemote[0], &tsLocalOn[0], 0, nullptr);
+        FILETIME after, copyOn;
+        GetSystemTimeAsFileTime(&after);
+
         Check(e2 && CompareFileTime(&e2->ftLastWriteTime, &before) >= 0
                  && CompareFileTime(&e2->ftLastWriteTime, &after) <= 0,
               "SetTimestampsToCurrentTime shows the current time on files");
-        WIN32_FIND_DATAW* lk = findEntry(onList, L"Open");
         Check(lk && CompareFileTime(&lk->ftLastWriteTime, &before) >= 0
                  && CompareFileTime(&lk->ftLastWriteTime, &after) <= 0,
               "SetTimestampsToCurrentTime applies to the link entry too");
+        Check(rc == FS_FILE_OK && lastWriteOf(tsLocalOn, copyOn)
+                  && CompareFileTime(&copyOn, &before) >= 0
+                  && CompareFileTime(&copyOn, &after) <= 0,
+              "copied file gets the current time (option on)");
     }
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------

@@ -663,13 +663,35 @@ int __stdcall FsFindClose(HANDLE Hdl)
 // the file.
 static const int FS_RAW_FALLBACK = -1;
 
-static void StampNow(HANDLE hFile)
+struct CopyTimes {
+    FILETIME create{};
+    FILETIME access{};
+    FILETIME write{};
+};
+
+// The timestamps a copied-out file should carry so it matches what the panel
+// shows for the entry: the current time when SetTimestampsToCurrentTime is on,
+// otherwise the template file's own times.
+static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cfg)
 {
-    // "New document" semantics: the copy is a brand-new file created now, not
-    // a clone of the template's timestamps.
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    SetFileTime(hFile, &now, &now, &now);
+    CopyTimes t;
+    WIN32_FILE_ATTRIBUTE_DATA ad;
+    if (!cfg.setTimestampsToCurrentTime &&
+        GetFileAttributesExW(realPath.c_str(), GetFileExInfoStandard, &ad)) {
+        t.create = ad.ftCreationTime;
+        t.access = ad.ftLastAccessTime;
+        t.write  = ad.ftLastWriteTime;
+    } else {
+        FILETIME now;
+        GetSystemTimeAsFileTime(&now);
+        t.create = t.access = t.write = now;
+    }
+    return t;
+}
+
+static void StampFile(HANDLE hFile, const CopyTimes& t)
+{
+    SetFileTime(hFile, &t.create, &t.access, &t.write);
 }
 
 // Copies `realPath` to `localName` while expanding New+ variables in its
@@ -679,7 +701,8 @@ static void StampNow(HANDLE hFile)
 // FS_FILE_* code, or FS_RAW_FALLBACK when the content is not valid UTF-8.
 static int CopyExpanded(const std::wstring& realPath,
                         const std::wstring& localName,
-                        const std::wstring& parentName)
+                        const std::wstring& parentName,
+                        const CopyTimes&    times)
 {
     HANDLE hSrc = CreateFileW(realPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -743,7 +766,7 @@ static int CopyExpanded(const std::wstring& realPath,
         writeOk = WriteFile(hDst, out.data(), static_cast<DWORD>(out.size()),
                             &put, nullptr) && put == out.size();
     }
-    StampNow(hDst);
+    StampFile(hDst, times);
     CloseHandle(hDst);
 
     if (!writeOk) {
@@ -781,6 +804,11 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (ProgressAborted(RemoteName, LocalName, 0))
         return FS_FILE_USERABORT;
 
+    // The created file carries the same timestamps the panel shows for the
+    // entry (template's real times by default, the current time when
+    // SetTimestampsToCurrentTime is on).
+    const CopyTimes copyTimes = ResolveCopyTimes(realPath, cfg);
+
     // Expand New+ variables inside the content for configured extensions.
     // $PARENT_FOLDER_NAME uses the (already substituted) display name of the
     // immediate parent folder; empty at the plugin root.
@@ -788,7 +816,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
         const std::wstring parentDir = VirtualParent(vpath);
         const std::wstring parentName =
             (parentDir == L"\\") ? std::wstring() : VirtualLeaf(parentDir);
-        int r = CopyExpanded(realPath, LocalName, parentName);
+        int r = CopyExpanded(realPath, LocalName, parentName, copyTimes);
         if (r != FS_RAW_FALLBACK) {
             if (r == FS_FILE_OK)
                 ProgressAborted(RemoteName, LocalName, 100);
@@ -845,7 +873,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     }
 
     if (result == FS_FILE_OK)
-        StampNow(hDst);
+        StampFile(hDst, copyTimes);
 
     CloseHandle(hSrc);
     CloseHandle(hDst);

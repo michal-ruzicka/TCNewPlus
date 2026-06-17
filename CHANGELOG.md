@@ -15,8 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time instead of the physical template's, keeping the displayed times
   consistent with the date/time substituted into names and contents (the
   templates-folder link is included; otherwise it mirrors the templates
-  folder). Affects display only — a copied-out file always gets the current
-  time.
+  folder).
+
+### Changed
+
+- **A copied-out file now carries the same timestamps shown for it in the
+  panel** instead of always the current time: the template file's own times
+  by default, or the current time when `SetTimestampsToCurrentTime` is on.
 
 ## [v1.1.0] – 2026-06-17
 

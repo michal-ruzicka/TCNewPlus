@@ -277,8 +277,9 @@ into names and contents:
 SetTimestampsToCurrentTime=1
 ```
 
-This only changes what the panel *displays*. A file you create by copying a
-template out (`F5`) always gets the current time regardless of this setting.
+A file you create by copying a template out (`F5`) carries the **same
+timestamps it is shown with** in the panel: the current time when this option
+is on, or the template file's own times when it is off (the default).
 
 #### Variable Expansion Inside File Contents
 
