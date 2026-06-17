@@ -223,6 +223,7 @@ characters work — just save the file as UTF-8 (the default in most editors).
 | `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
 | `[Templates]` | `ShowLinkToTemplatesDir` | *(empty)* | Label for an extra entry that opens the real templates folder (see below) |
 | `[Templates]` | `SetTimestampsToCurrentTime` | `0` | Show the current time as the entries' timestamps instead of the template files' real ones |
+| `[Templates]` | `UseTimestampsToIndicateOrdering` | `0` | Step the displayed times by the prefix order so sorting by modification time reproduces it (see below) |
 | `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
 | `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
 | `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
@@ -280,6 +281,34 @@ SetTimestampsToCurrentTime=1
 A file you create by copying a template out (`F5`) carries the **same
 timestamps it is shown with** in the panel: the current time when this option
 is on, or the template file's own times when it is off (the default).
+
+#### Ordering by Modification Time
+
+A file-system plugin cannot impose its own sort order on Total Commander's
+panel, so the New+ prefix order (`1. `, `2. `, …) is normally lost once the
+prefixes are hidden. `UseTimestampsToIndicateOrdering=1` works around this:
+
+```ini
+[Templates]
+UseTimestampsToIndicateOrdering=1
+```
+
+It implies `SetTimestampsToCurrentTime=1` and additionally sets each entry's
+displayed modification time **one second earlier than the previous one**, in
+the order the templates sort **by their real name** (with the prefix — the
+same order the PowerToys New+ menu uses). Sort the `\\\TCNewPlus` panel by
+modification time (descending) and the entries line up in your intended
+order. The stepping restarts in every subfolder and includes the
+`ShowLinkToTemplatesDir` entry.
+
+Times are only ever stepped *backwards* (never into the future), and the
+steps affect the **display only**. Variable substitution in names and
+contents uses the listing snapshot, while the timestamps written to a
+copied-out file follow `SetTimestampsToCurrentTime` — so with that option off
+(the default), a file you create keeps the **template's real times** even
+though the panel shows the stepped ordering times. (If you keep folder
+templates, turn off TC's *Sort directories separately* option so folders take
+part in the time ordering.)
 
 #### Variable Expansion Inside File Contents
 

@@ -33,6 +33,8 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shlwapi.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -43,6 +45,7 @@
 #include <vector>
 
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -136,6 +139,7 @@ static std::shared_ptr<Snapshot> SnapshotFor(const std::wstring& vpath)
 struct VirtualEntry {
     WIN32_FIND_DATAW fd;       // cFileName already holds the display name
     std::wstring     realPath;
+    std::wstring     sortKey;  // raw template name (with prefix) for ordering
 };
 
 struct FindContext {
@@ -159,6 +163,16 @@ struct Config {
     // When true, displayed entries carry the current time instead of their
     // template's real timestamps — consistent with date variables in names.
     bool setTimestampsToCurrentTime = false;
+    // When true, implies setTimestampsToCurrentTime AND steps each displayed
+    // modification time one second earlier per entry (in real-name order, per
+    // directory), so sorting the panel by modification time reproduces the
+    // prefix ordering. Display only — substitution and copy times use the
+    // snapshot instant unchanged.
+    bool useTimestampsToIndicateOrdering = false;
+    // The INI file actually consulted, and whether it existed on disk (for the
+    // Alt+Enter properties / diagnostics).
+    std::wstring iniPath;
+    bool         iniExists = false;
 };
 
 // Splits a comma/semicolon-separated extension list into a set, trimming
@@ -373,6 +387,8 @@ static Config LoadConfig()
          GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
             ? userIni
             : dir + L"\\TCNewPlus.ini";
+    cfg.iniPath   = iniPath;
+    cfg.iniExists = GetFileAttributesW(iniPath.c_str()) != INVALID_FILE_ATTRIBUTES;
 
     const std::wstring ini = ReadTextFileToWide(iniPath);
 
@@ -397,6 +413,8 @@ static Config LoadConfig()
 
     cfg.setTimestampsToCurrentTime =
         IniLookupBool(ini, L"Templates", L"SetTimestampsToCurrentTime", false);
+    cfg.useTimestampsToIndicateOrdering =
+        IniLookupBool(ini, L"Templates", L"UseTimestampsToIndicateOrdering", false);
 
     return cfg;
 }
@@ -545,6 +563,11 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     const std::shared_ptr<Snapshot> snap = CaptureSnapshot();
     const EnvLookup env = SnapshotEnv(snap);
 
+    // UseTimestampsToIndicateOrdering implies the current-time display, and
+    // additionally steps the times per entry below.
+    const bool currentTimeDisplay =
+        cfg.setTimestampsToCurrentTime || cfg.useTimestampsToIndicateOrdering;
+
     // $PARENT_FOLDER_NAME inside a template subfolder expands to the
     // (already substituted) display name of that subfolder; empty at root.
     const std::wstring parentName =
@@ -564,12 +587,13 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
             VirtualEntry entry;
             entry.fd = fd;
+            entry.sortKey = fd.cFileName; // real name, with prefix, for ordering
             wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
             entry.fd.cAlternateFileName[0] = L'\0';
             // The copy TC creates must be writable even if the template is
             // marked read-only on disk — New+ copies are ordinary new files.
             entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
-            if (cfg.setTimestampsToCurrentTime)
+            if (currentTimeDisplay)
                 entry.fd.ftCreationTime = entry.fd.ftLastAccessTime =
                     entry.fd.ftLastWriteTime = snap->fileTime;
             entry.realPath = realDir + L"\\" + fd.cFileName;
@@ -604,10 +628,11 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
             VirtualEntry link;
             link.fd = {};
             link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-            // Timestamps: the snapshot time when SetTimestampsToCurrentTime is
-            // on; otherwise mirror the link's target (the templates folder).
+            link.sortKey = cfg.linkName; // raw label (with prefix) for ordering
+            // Timestamps: the snapshot time under the current-time display;
+            // otherwise mirror the link's target (the templates folder).
             WIN32_FILE_ATTRIBUTE_DATA ad;
-            if (!cfg.setTimestampsToCurrentTime &&
+            if (!currentTimeDisplay &&
                 GetFileAttributesExW(cfg.templatesPath.c_str(),
                                      GetFileExInfoStandard, &ad)) {
                 link.fd.ftCreationTime   = ad.ftCreationTime;
@@ -632,6 +657,30 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                 g_linkPaths.insert(linkVPath);
             }
             out.push_back(std::move(link));
+        }
+    }
+
+    // UseTimestampsToIndicateOrdering: order entries by their real name (with
+    // prefix, natural/Explorer-style sort, same as the New+ menu) and step the
+    // displayed modification time one second earlier per position. Sorting the
+    // panel by modification time then reproduces that order. We subtract (never
+    // add) so the times never land in the future. Display only — the maps,
+    // names and copy times keep the snapshot instant.
+    if (cfg.useTimestampsToIndicateOrdering && !out.empty()) {
+        std::stable_sort(out.begin(), out.end(),
+                         [](const VirtualEntry& a, const VirtualEntry& b) {
+                             return StrCmpLogicalW(a.sortKey.c_str(),
+                                                   b.sortKey.c_str()) < 0;
+                         });
+        ULONGLONG base = (static_cast<ULONGLONG>(snap->fileTime.dwHighDateTime) << 32) |
+                         snap->fileTime.dwLowDateTime;
+        for (size_t i = 0; i < out.size(); ++i) {
+            ULONGLONG t = base - static_cast<ULONGLONG>(i) * 10000000ULL; // i seconds
+            FILETIME ft;
+            ft.dwLowDateTime  = static_cast<DWORD>(t & 0xFFFFFFFFULL);
+            ft.dwHighDateTime = static_cast<DWORD>(t >> 32);
+            out[i].fd.ftCreationTime = out[i].fd.ftLastAccessTime =
+                out[i].fd.ftLastWriteTime = ft;
         }
     }
 
@@ -738,6 +787,10 @@ struct CopyTimes {
 static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cfg,
                                   const std::shared_ptr<Snapshot>& snap)
 {
+    // Copy timestamps are governed SOLELY by SetTimestampsToCurrentTime. The
+    // UseTimestampsToIndicateOrdering steps are a display-only sorting aid and
+    // must not leak into created files — with SetTimestampsToCurrentTime off, a
+    // copy keeps the template's real times even when ordering is on.
     CopyTimes t;
     WIN32_FILE_ATTRIBUTE_DATA ad;
     if (!cfg.setTimestampsToCurrentTime &&
@@ -976,10 +1029,28 @@ int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
         const Config cfg = LoadConfig();
         const std::wstring realPath = ResolveRealPath(vpath, cfg);
 
-        std::wstring text = L"Virtual name:\n" + vpath +
-                            L"\n\nTemplate source:\n" +
-                            (realPath.empty() ? L"(not found)" : realPath) +
-                            L"\n\nTemplates folder:\n" + cfg.templatesPath;
+        auto onOff = [](bool b) -> std::wstring { return b ? L"on" : L"off"; };
+        std::wstring exts;
+        for (const auto& e : cfg.expandExtensions)
+            exts += (exts.empty() ? L"" : L",") + e;
+
+        std::wstring text =
+            L"Virtual name:\n" + vpath +
+            L"\n\nTemplate source:\n" +
+            (realPath.empty() ? L"(not found)" : realPath) +
+            L"\n\nActive config file" +
+            (cfg.iniExists ? L":\n" : L" (does not exist, using defaults):\n") +
+            cfg.iniPath +
+            L"\n\nSettings in effect:" +
+            L"\n  TemplatesPath = " + cfg.templatesPath +
+            L"\n  ReplaceFilenameVariables = " + onOff(cfg.rules.replaceVariables) +
+            L"\n  HideStartingDigits = " + onOff(cfg.rules.hideStartingDigits) +
+            L"\n  ReplaceContentVariables = " + (exts.empty() ? L"(none)" : exts) +
+            L"\n  ShowLinkToTemplatesDir = " +
+            (cfg.linkName.empty() ? L"(none)" : cfg.linkName) +
+            L"\n  SetTimestampsToCurrentTime = " + onOff(cfg.setTimestampsToCurrentTime) +
+            L"\n  UseTimestampsToIndicateOrdering = " +
+            onOff(cfg.useTimestampsToIndicateOrdering);
         MessageBoxW(MainWin, text.c_str(), L"TCNewPlus", MB_OK | MB_ICONINFORMATION);
         return FS_EXEC_OK;
     }

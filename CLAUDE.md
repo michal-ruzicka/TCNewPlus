@@ -162,6 +162,17 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   times via `GetFileAttributesExW`) and `StampFile` applies it in both the
   streaming and `CopyExpanded` paths. (This replaced the old always-current-time
   `StampNow` "new document" behaviour.)
+- **`UseTimestampsToIndicateOrdering`** implies `SetTimestampsToCurrentTime`
+  and, after a directory's entries are built, stable-sorts them by real name
+  (`StrCmpLogicalW`, the New+/Explorer natural order, link entry included by its
+  raw label) and steps each displayed modification time one second earlier per
+  position — subtract only, never into the future. **Display only**: the maps
+  and name/content substitution use the un-stepped snapshot, and
+  `ResolveCopyTimes` ignores this flag entirely — copy timestamps are governed
+  solely by `setTimestampsToCurrentTime` (so ordering-on + SetTimestamps-off
+  copies keep the template's real times). Sorting the panel by modification
+  time then reproduces the prefix order the plugin otherwise cannot impose.
+  Per directory.
 - **Only the root and real subfolders are listable.** A non-resolvable path
   (a file path, the link entry opened as a folder, or a typed non-existent
   name) is never given a bogus success. `FsFindFirstW` reports a failing

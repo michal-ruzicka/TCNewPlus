@@ -661,6 +661,61 @@ static void RunEndToEndTests(const wchar_t* dllPath)
               "copied file gets the current time (option on)");
     }
 
+    // --- UseTimestampsToIndicateOrdering -----------------------------------
+    {
+        auto findEntry = [](std::vector<WIN32_FIND_DATAW>& v,
+                            const std::wstring& name) -> WIN32_FIND_DATAW* {
+            for (auto& fd : v)
+                if (name == fd.cFileName)
+                    return &fd;
+            return nullptr;
+        };
+        auto toU = [](const FILETIME& ft) {
+            return (static_cast<ULONGLONG>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        };
+        const ULONGLONG oneSecond = 10000000ULL; // 100-ns units
+
+        FILETIME before;
+        GetSystemTimeAsFileTime(&before);
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"UseTimestampsToIndicateOrdering=1\r\n");
+        auto ord = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        FILETIME after;
+        GetSystemTimeAsFileTime(&after);
+
+        // Real names "1. Plain.txt" < "2. Note ..." < ... < "6. Vars ..." set the
+        // order; the displayed modification time steps one second earlier per rank.
+        WIN32_FIND_DATAW* p = findEntry(ord, L"Plain.txt");              // rank 0
+        WIN32_FIND_DATAW* n = findEntry(ord, L"Note " + year + L".txt"); // rank 1
+        WIN32_FIND_DATAW* v = findEntry(ord, L"Vars " + year + L".md");  // rank 5
+        Check(p && n && v, "ordering: entries present");
+
+        Check(p && CompareFileTime(&p->ftLastWriteTime, &before) >= 0
+                && CompareFileTime(&p->ftLastWriteTime, &after) <= 0,
+              "ordering: first entry carries the current time");
+        Check(p && n && toU(p->ftLastWriteTime) - toU(n->ftLastWriteTime) == oneSecond,
+              "ordering: second entry is exactly one second earlier");
+        Check(p && v && toU(p->ftLastWriteTime) - toU(v->ftLastWriteTime) == 5 * oneSecond,
+              "ordering: sixth entry is exactly five seconds earlier");
+
+        // The stepping is display-only and copy timestamps are governed solely
+        // by SetTimestampsToCurrentTime: with it off (here), a copied file keeps
+        // the template file's real times — neither the stepped display time nor
+        // the snapshot.
+        WIN32_FILE_ATTRIBUTE_DATA tmpl;
+        Check(GetFileAttributesExW((templates + L"\\6. Vars $YYYY.md").c_str(),
+                                   GetFileExInfoStandard, &tmpl),
+              "ordering: template file is readable");
+        std::wstring ordRemote = L"\\Vars " + year + L".md";
+        std::wstring ordLocal  = outDir + L"\\ord.md";
+        rc = fsGetFileW(&ordRemote[0], &ordLocal[0], 0, nullptr);
+        WIN32_FILE_ATTRIBUTE_DATA cad;
+        Check(rc == FS_FILE_OK
+                  && GetFileAttributesExW(ordLocal.c_str(), GetFileExInfoStandard, &cad)
+                  && CompareFileTime(&cad.ftLastWriteTime, &tmpl.ftLastWriteTime) == 0,
+              "ordering: copied file keeps the template's real time (copy ignores stepping)");
+    }
+
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over
     // the INI next to the DLL. Point it at a different templates folder and
