@@ -140,6 +140,13 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   `MakeDisplayName` and is validated with `IsValidEntryName`. The ANSI
   `FsExecuteFile` wrapper copies the redirect path back into its caller
   buffer (needs `MAX_PATH`).
+- **Displayed timestamps** default to the template's real file times. With
+  `[Templates] SetTimestampsToCurrentTime=1`, `EnumerateVirtualDir` stamps every
+  entry's fd times with one `GetSystemTimeAsFileTime` snapshot (taken next to the
+  `GetLocalTime` used for name substitution, so panel times match the dates in
+  names). The link entry follows the flag too; with it off the link mirrors the
+  templates folder's own times (`GetFileAttributesExW`). This is display-only —
+  `FsGetFileW`/`StampNow` always stamp a copied-out file with the current time.
 - **Only the root and real subfolders are listable.** A non-resolvable path
   (a file path, the link entry opened as a folder, or a typed non-existent
   name) is never given a bogus success. `FsFindFirstW` reports a failing

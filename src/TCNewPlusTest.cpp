@@ -547,6 +547,59 @@ static void RunEndToEndTests(const wchar_t* dllPath)
               "normal entries still listed when the link is disabled");
     }
 
+    // --- SetTimestampsToCurrentTime ----------------------------------------
+    {
+        auto findEntry = [](std::vector<WIN32_FIND_DATAW>& v,
+                            const std::wstring& name) -> WIN32_FIND_DATAW* {
+            for (auto& fd : v)
+                if (name == fd.cFileName)
+                    return &fd;
+            return nullptr;
+        };
+
+        // Give a template a known, old timestamp.
+        FILETIME oldFt = {};
+        SYSTEMTIME oldSt = {};
+        oldSt.wYear = 2020; oldSt.wMonth = 1; oldSt.wDay = 1;
+        SystemTimeToFileTime(&oldSt, &oldFt);
+        {
+            HANDLE h = CreateFileW((templates + L"\\1. Plain.txt").c_str(),
+                                   FILE_WRITE_ATTRIBUTES,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                SetFileTime(h, &oldFt, &oldFt, &oldFt);
+                CloseHandle(h);
+            }
+        }
+
+        // Off (default): the displayed time is the template's real timestamp.
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n");
+        auto defList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        WIN32_FIND_DATAW* e1 = findEntry(defList, L"Plain.txt");
+        Check(e1 && CompareFileTime(&e1->ftLastWriteTime, &oldFt) == 0,
+              "default keeps the template's real timestamp");
+
+        // On: every entry (including the link) carries the current time.
+        FILETIME before;
+        GetSystemTimeAsFileTime(&before);
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"ShowLinkToTemplatesDir=Open\r\n"
+                           L"SetTimestampsToCurrentTime=1\r\n");
+        auto onList = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        FILETIME after;
+        GetSystemTimeAsFileTime(&after);
+
+        WIN32_FIND_DATAW* e2 = findEntry(onList, L"Plain.txt");
+        Check(e2 && CompareFileTime(&e2->ftLastWriteTime, &before) >= 0
+                 && CompareFileTime(&e2->ftLastWriteTime, &after) <= 0,
+              "SetTimestampsToCurrentTime shows the current time on files");
+        WIN32_FIND_DATAW* lk = findEntry(onList, L"Open");
+        Check(lk && CompareFileTime(&lk->ftLastWriteTime, &before) >= 0
+                 && CompareFileTime(&lk->ftLastWriteTime, &after) <= 0,
+              "SetTimestampsToCurrentTime applies to the link entry too");
+    }
+
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over
     // the INI next to the DLL. Point it at a different templates folder and

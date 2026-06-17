@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Optional current-time timestamps** (`[Templates]
+  SetTimestampsToCurrentTime`, off by default). When enabled, every entry
+  under `\\\TCNewPlus` is shown with the current created/modified/accessed
+  time instead of the physical template's, keeping the displayed times
+  consistent with the date/time substituted into names and contents (the
+  templates-folder link is included; otherwise it mirrors the templates
+  folder). Affects display only — a copied-out file always gets the current
+  time.
+
 ## [v1.1.0] – 2026-06-17
 
 ### Added
@@ -87,5 +100,6 @@ First public release.
   clean-room verification builds.
 
 
+[Unreleased]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.1.0...template-timestamps
 [v1.1.0]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/michal-ruzicka/TCNewPlus/releases/tag/v1.0.0

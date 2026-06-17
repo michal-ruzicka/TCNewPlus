@@ -94,6 +94,9 @@ struct Config {
     // Label for an extra root entry that links to the real templates folder
     // (ShowLinkToTemplatesDir). Empty = no link entry shown.
     std::wstring linkName;
+    // When true, displayed entries carry the current time instead of their
+    // template's real timestamps — consistent with date variables in names.
+    bool setTimestampsToCurrentTime = false;
 };
 
 // Splits a comma/semicolon-separated extension list into a set, trimming
@@ -330,6 +333,9 @@ static Config LoadConfig()
     // linkName empty, which disables the templates-folder link entry.
     IniLookup(ini, L"Templates", L"ShowLinkToTemplatesDir", cfg.linkName);
 
+    cfg.setTimestampsToCurrentTime =
+        IniLookupBool(ini, L"Templates", L"SetTimestampsToCurrentTime", false);
+
     return cfg;
 }
 
@@ -470,10 +476,13 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     if (hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND)
         return false;
 
-    // One time snapshot per directory listing so all names in the panel
-    // carry the same timestamp.
+    // One time snapshot per directory listing so all names — and, when
+    // SetTimestampsToCurrentTime is on, all displayed file times — carry the
+    // same value.
     SYSTEMTIME now;
     GetLocalTime(&now);
+    FILETIME nowFt;
+    GetSystemTimeAsFileTime(&nowFt);
 
     // $PARENT_FOLDER_NAME inside a template subfolder expands to the
     // (already substituted) display name of that subfolder; empty at root.
@@ -499,6 +508,9 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
             // The copy TC creates must be writable even if the template is
             // marked read-only on disk — New+ copies are ordinary new files.
             entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+            if (cfg.setTimestampsToCurrentTime)
+                entry.fd.ftCreationTime = entry.fd.ftLastAccessTime =
+                    entry.fd.ftLastWriteTime = nowFt;
             entry.realPath = realDir + L"\\" + fd.cFileName;
 
             // Key the map by the exact name handed back to TC (cFileName, which
@@ -529,10 +541,19 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
             VirtualEntry link;
             link.fd = {};
             link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-            FILETIME ft;
-            GetSystemTimeAsFileTime(&ft);
-            link.fd.ftCreationTime = link.fd.ftLastAccessTime =
-                link.fd.ftLastWriteTime = ft;
+            // Timestamps: current time when SetTimestampsToCurrentTime is on;
+            // otherwise mirror the link's target (the templates folder).
+            WIN32_FILE_ATTRIBUTE_DATA ad;
+            if (!cfg.setTimestampsToCurrentTime &&
+                GetFileAttributesExW(cfg.templatesPath.c_str(),
+                                     GetFileExInfoStandard, &ad)) {
+                link.fd.ftCreationTime   = ad.ftCreationTime;
+                link.fd.ftLastAccessTime = ad.ftLastAccessTime;
+                link.fd.ftLastWriteTime  = ad.ftLastWriteTime;
+            } else {
+                link.fd.ftCreationTime = link.fd.ftLastAccessTime =
+                    link.fd.ftLastWriteTime = nowFt;
+            }
             wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
             link.fd.cAlternateFileName[0] = L'\0';
 

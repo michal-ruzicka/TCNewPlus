@@ -222,6 +222,7 @@ characters work — just save the file as UTF-8 (the default in most editors).
 | --- | --- | --- | --- |
 | `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
 | `[Templates]` | `ShowLinkToTemplatesDir` | *(empty)* | Label for an extra entry that opens the real templates folder (see below) |
+| `[Templates]` | `SetTimestampsToCurrentTime` | `0` | Show the current time as the entries' timestamps instead of the template files' real ones |
 | `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
 | `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
 | `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
@@ -262,6 +263,22 @@ The entry is a **shortcut, not a browsable folder**: use **Enter** to follow
 it. Operations that open a folder *without* "executing" it (for example
 "open in a new tab") do not follow the shortcut — they simply do nothing,
 because there is no virtual folder to descend into.
+
+#### Entry Timestamps
+
+By default each entry in `\\\TCNewPlus` shows the created / modified /
+accessed times of the **physical template** behind it. Set
+`SetTimestampsToCurrentTime=1` (under `[Templates]`) to show the **current
+time** on every entry instead — consistent with the date and time substituted
+into names and contents:
+
+```ini
+[Templates]
+SetTimestampsToCurrentTime=1
+```
+
+This only changes what the panel *displays*. A file you create by copying a
+template out (`F5`) always gets the current time regardless of this setting.
 
 #### Variable Expansion Inside File Contents
 
