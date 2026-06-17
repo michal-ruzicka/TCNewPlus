@@ -32,9 +32,14 @@ Consequences worth remembering before "fixing" them:
 - **Panel sort order is TC's.** We cannot impose the New+ prefix order on
   TC's panel; with `HideStartingDigits=1` the prefixes are gone before TC
   sorts. This is documented as a difference, not a bug.
-- **Displayed names are snapshots** of the listing moment. `Ctrl+R`
-  re-substitutes. Do not try to re-substitute inside `FsGetFileW` — the
-  target name was already fixed by TC.
+- **One snapshot per listing drives everything.** `EnumerateVirtualDir`
+  captures a `Snapshot` (local time + environment block) per refresh, uses it
+  to substitute names, and stores it per virtual path in `g_snapshots`.
+  `FsGetFileW` looks the snapshot back up (`SnapshotFor`) so the file's
+  *content* substitution and *copy timestamps* use the SAME instant and the
+  SAME env values as its name — even if the clock ticked or a system variable
+  changed between listing and copy. `Ctrl+R` re-snapshots. Do not re-substitute
+  the name inside `FsGetFileW` — TC already fixed the target name.
 
 ## Repo layout
 
@@ -106,10 +111,16 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   (`[FileContents] ReplaceContentVariables`, empty by default — a
   comma-separated extension list, not a boolean). `CopyExpanded` in
   `FsGetFileW` reads the file as UTF-8
-  (BOM preserved), expands with copy-time `GetLocalTime`, and writes UTF-8;
-  a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the raw
-  byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
+  (BOM preserved), expands with the listing **snapshot** (`snap->localTime`
+  and `SnapshotEnv(snap)`, NOT a fresh `GetLocalTime`/live env), and writes
+  UTF-8; a file that fails `MB_ERR_INVALID_CHARS` decoding falls back to the
+  raw byte copy (`FS_RAW_FALLBACK`) so binaries are never corrupted. This is a
   TCNewPlus extension — New+ only substitutes in names.
+- **`NameSubstitution` no longer reads the live environment.** `%VAR%` goes
+  through an injected `EnvLookup` so the plugin can pass a snapshot of the
+  environment; the unit test passes a live-env lookup, the plugin passes
+  `SnapshotEnv`. Keep it that way — a live `GetEnvironmentVariableW` inside the
+  substitution would defeat the snapshot.
 - **Empty-directory contract:** `FsFindFirstW` returns
   `INVALID_HANDLE_VALUE` with `SetLastError(ERROR_NO_MORE_FILES)` for an
   empty dir and `ERROR_PATH_NOT_FOUND` for a missing root; TC distinguishes

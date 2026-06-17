@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -70,6 +71,67 @@ static std::mutex g_mapMutex;
 // ShowLinkToTemplatesDir feature). Opening one navigates TC to the real
 // templates directory rather than copying a file. Guarded by g_mapMutex.
 static std::set<std::wstring, CaseInsensitiveLess> g_linkPaths;
+
+// A snapshot of the moment a directory was listed (refreshed): the local time,
+// the same as a FILETIME, and the environment block. The same snapshot drives
+// name substitution AND, later, the file's content substitution and copy
+// timestamps, so every value stays consistent even if the clock ticks or a
+// system variable changes between the listing and the copy.
+struct Snapshot {
+    SYSTEMTIME localTime{};
+    FILETIME   fileTime{};
+    std::map<std::wstring, std::wstring, CaseInsensitiveLess> env;
+};
+
+// Virtual path -> the snapshot taken when it was last listed. Grows/overwrites
+// like g_virtualToReal; snapshot objects are shared per listing. Guarded by
+// g_mapMutex.
+static std::map<std::wstring, std::shared_ptr<Snapshot>, CaseInsensitiveLess> g_snapshots;
+
+// Captures the current local time and environment block.
+static std::shared_ptr<Snapshot> CaptureSnapshot()
+{
+    auto s = std::make_shared<Snapshot>();
+    GetLocalTime(&s->localTime);
+    GetSystemTimeAsFileTime(&s->fileTime);
+    if (LPWCH block = GetEnvironmentStringsW()) {
+        for (LPWCH p = block; *p; ) {
+            std::wstring entry(p);
+            p += entry.size() + 1;
+            // Skip the special "=C:=..." drive entries (leading '=').
+            size_t eq = entry.find(L'=');
+            if (eq != std::wstring::npos && eq != 0)
+                s->env.emplace(entry.substr(0, eq), entry.substr(eq + 1));
+        }
+        FreeEnvironmentStringsW(block);
+    }
+    return s;
+}
+
+// Builds an EnvLookup backed by a snapshot's captured environment.
+static EnvLookup SnapshotEnv(const std::shared_ptr<Snapshot>& snap)
+{
+    return [snap](const std::wstring& name, std::wstring& value) -> bool {
+        auto it = snap->env.find(name);
+        if (it == snap->env.end())
+            return false;
+        value = it->second;
+        return true;
+    };
+}
+
+// Returns the snapshot stored for `vpath`, or a fresh one if the path was never
+// listed in this session (best effort — keeps a copy working).
+static std::shared_ptr<Snapshot> SnapshotFor(const std::wstring& vpath)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_mapMutex);
+        auto it = g_snapshots.find(vpath);
+        if (it != g_snapshots.end())
+            return it->second;
+    }
+    return CaptureSnapshot();
+}
 
 struct VirtualEntry {
     WIN32_FIND_DATAW fd;       // cFileName already holds the display name
@@ -476,13 +538,12 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     if (hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND)
         return false;
 
-    // One time snapshot per directory listing so all names — and, when
-    // SetTimestampsToCurrentTime is on, all displayed file times — carry the
-    // same value.
-    SYSTEMTIME now;
-    GetLocalTime(&now);
-    FILETIME nowFt;
-    GetSystemTimeAsFileTime(&nowFt);
+    // One snapshot per directory listing: every name (and, when enabled, every
+    // displayed time) uses it, and it is stored per entry so the later copy of
+    // that entry expands its contents and stamps its times from the SAME
+    // moment — even if the clock or a system variable changed in between.
+    const std::shared_ptr<Snapshot> snap = CaptureSnapshot();
+    const EnvLookup env = SnapshotEnv(snap);
 
     // $PARENT_FOLDER_NAME inside a template subfolder expands to the
     // (already substituted) display name of that subfolder; empty at root.
@@ -498,7 +559,7 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
             const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             std::wstring display = MakeUniqueName(
-                MakeDisplayName(fd.cFileName, cfg.rules, now, parentName),
+                MakeDisplayName(fd.cFileName, cfg.rules, snap->localTime, parentName, env),
                 isDir, usedNames);
 
             VirtualEntry entry;
@@ -510,15 +571,17 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
             entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
             if (cfg.setTimestampsToCurrentTime)
                 entry.fd.ftCreationTime = entry.fd.ftLastAccessTime =
-                    entry.fd.ftLastWriteTime = nowFt;
+                    entry.fd.ftLastWriteTime = snap->fileTime;
             entry.realPath = realDir + L"\\" + fd.cFileName;
 
-            // Key the map by the exact name handed back to TC (cFileName, which
+            // Key the maps by the exact name handed back to TC (cFileName, which
             // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with
             // the name TC echoes back always matches.
             {
                 std::lock_guard<std::mutex> lock(g_mapMutex);
-                g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
+                const std::wstring key = JoinVirtual(virtualDir, entry.fd.cFileName);
+                g_virtualToReal[key] = entry.realPath;
+                g_snapshots[key] = snap;
             }
 
             out.push_back(std::move(entry));
@@ -534,15 +597,15 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
     // templates folder (handled in FsExecuteFileW).
     if (virtualDir == L"\\" && !cfg.linkName.empty()) {
         std::wstring linkDisplay =
-            MakeDisplayName(cfg.linkName, cfg.rules, now, std::wstring());
+            MakeDisplayName(cfg.linkName, cfg.rules, snap->localTime, std::wstring(), env);
         if (IsValidEntryName(linkDisplay)) {
             linkDisplay = MakeUniqueName(linkDisplay, /*isDir=*/false, usedNames);
 
             VirtualEntry link;
             link.fd = {};
             link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-            // Timestamps: current time when SetTimestampsToCurrentTime is on;
-            // otherwise mirror the link's target (the templates folder).
+            // Timestamps: the snapshot time when SetTimestampsToCurrentTime is
+            // on; otherwise mirror the link's target (the templates folder).
             WIN32_FILE_ATTRIBUTE_DATA ad;
             if (!cfg.setTimestampsToCurrentTime &&
                 GetFileAttributesExW(cfg.templatesPath.c_str(),
@@ -552,7 +615,7 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                 link.fd.ftLastWriteTime  = ad.ftLastWriteTime;
             } else {
                 link.fd.ftCreationTime = link.fd.ftLastAccessTime =
-                    link.fd.ftLastWriteTime = nowFt;
+                    link.fd.ftLastWriteTime = snap->fileTime;
             }
             wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
             link.fd.cAlternateFileName[0] = L'\0';
@@ -670,9 +733,10 @@ struct CopyTimes {
 };
 
 // The timestamps a copied-out file should carry so it matches what the panel
-// shows for the entry: the current time when SetTimestampsToCurrentTime is on,
-// otherwise the template file's own times.
-static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cfg)
+// shows for the entry: the listing snapshot's time when SetTimestampsToCurrent
+// Time is on, otherwise the template file's own times.
+static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cfg,
+                                  const std::shared_ptr<Snapshot>& snap)
 {
     CopyTimes t;
     WIN32_FILE_ATTRIBUTE_DATA ad;
@@ -682,9 +746,7 @@ static CopyTimes ResolveCopyTimes(const std::wstring& realPath, const Config& cf
         t.access = ad.ftLastAccessTime;
         t.write  = ad.ftLastWriteTime;
     } else {
-        FILETIME now;
-        GetSystemTimeAsFileTime(&now);
-        t.create = t.access = t.write = now;
+        t.create = t.access = t.write = snap->fileTime;
     }
     return t;
 }
@@ -702,7 +764,8 @@ static void StampFile(HANDLE hFile, const CopyTimes& t)
 static int CopyExpanded(const std::wstring& realPath,
                         const std::wstring& localName,
                         const std::wstring& parentName,
-                        const CopyTimes&    times)
+                        const CopyTimes&    times,
+                        const std::shared_ptr<Snapshot>& snap)
 {
     HANDLE hSrc = CreateFileW(realPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -737,9 +800,8 @@ static int CopyExpanded(const std::wstring& realPath,
         MultiByteToWideChar(CP_UTF8, 0, textPtr, textLen, &wide[0], wlen);
     }
 
-    SYSTEMTIME now;
-    GetLocalTime(&now);
-    std::wstring expanded = ReplaceTemplateVariables(wide, now, parentName, false);
+    std::wstring expanded = ReplaceTemplateVariables(
+        wide, snap->localTime, parentName, SnapshotEnv(snap), false);
 
     std::string out;
     if (hasBom)
@@ -804,10 +866,15 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (ProgressAborted(RemoteName, LocalName, 0))
         return FS_FILE_USERABORT;
 
+    // Use the snapshot taken when this entry was listed, so the content
+    // substitution and the copy's timestamps match the name TC already fixed at
+    // listing time (same clock instant, same environment values).
+    const std::shared_ptr<Snapshot> snap = SnapshotFor(vpath);
+
     // The created file carries the same timestamps the panel shows for the
-    // entry (template's real times by default, the current time when
+    // entry (template's real times by default, the snapshot time when
     // SetTimestampsToCurrentTime is on).
-    const CopyTimes copyTimes = ResolveCopyTimes(realPath, cfg);
+    const CopyTimes copyTimes = ResolveCopyTimes(realPath, cfg, snap);
 
     // Expand New+ variables inside the content for configured extensions.
     // $PARENT_FOLDER_NAME uses the (already substituted) display name of the
@@ -816,7 +883,7 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
         const std::wstring parentDir = VirtualParent(vpath);
         const std::wstring parentName =
             (parentDir == L"\\") ? std::wstring() : VirtualLeaf(parentDir);
-        int r = CopyExpanded(realPath, LocalName, parentName, copyTimes);
+        int r = CopyExpanded(realPath, LocalName, parentName, copyTimes, snap);
         if (r != FS_RAW_FALLBACK) {
             if (r == FS_FILE_OK)
                 ProgressAborted(RemoteName, LocalName, 100);

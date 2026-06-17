@@ -127,6 +127,19 @@ static void TestDateTimeVariables()
             L"$Q $", "unknown token and trailing $ stay literal");
 }
 
+// An EnvLookup over the live process environment, for the unit tests.
+static bool LiveEnv(const std::wstring& name, std::wstring& value)
+{
+    DWORD n = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
+    if (n == 0)
+        return false;
+    std::wstring v(n, L'\0');
+    DWORD w = GetEnvironmentVariableW(name.c_str(), &v[0], n);
+    v.resize(w);
+    value = v;
+    return true;
+}
+
 static void TestSpecialAndEnvironmentVariables()
 {
     const SYSTEMTIME st = FixedTime();
@@ -138,22 +151,22 @@ static void TestSpecialAndEnvironmentVariables()
             L"$PARENT_FOLDER_NAME.md", "$PARENT_FOLDER_NAME at root stays");
 
     SetEnvironmentVariableW(L"TCNP_TEST_VALUE", L"plain");
-    CheckEq(ReplaceTemplateVariables(L"by %TCNP_TEST_VALUE%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"by %TCNP_TEST_VALUE%", st, L"", LiveEnv),
             L"by plain", "environment variable");
-    CheckEq(ReplaceTemplateVariables(L"by %tcnp_test_value%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"by %tcnp_test_value%", st, L"", LiveEnv),
             L"by plain", "environment variable is case-insensitive");
 
     SetEnvironmentVariableW(L"TCNP_TEST_INVALID", L"a<b>c:d");
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", LiveEnv),
             L"a b c d", "invalid filename chars become spaces");
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", false),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_INVALID%", st, L"", LiveEnv, false),
             L"a<b>c:d", "content mode keeps filename-invalid chars verbatim");
-    CheckEq(ReplaceTemplateVariables(L"$PARENT_FOLDER_NAME", st, L"a:b", false),
+    CheckEq(ReplaceTemplateVariables(L"$PARENT_FOLDER_NAME", st, L"a:b", LiveEnv, false),
             L"a:b", "content mode keeps invalid chars in $PARENT_FOLDER_NAME");
 
-    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_UNDEFINED% x", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"%TCNP_TEST_UNDEFINED% x", st, L"", LiveEnv),
             L"%TCNP_TEST_UNDEFINED% x", "undefined variable stays verbatim");
-    CheckEq(ReplaceTemplateVariables(L"100% done", st, L""),
+    CheckEq(ReplaceTemplateVariables(L"100% done", st, L"", LiveEnv),
             L"100% done", "lone percent sign stays literal");
 
     SetEnvironmentVariableW(L"TCNP_TEST_VALUE", nullptr);
@@ -180,7 +193,7 @@ static void TestMakeDisplayName()
             L"1. Note $YYYY.txt", "verbatim when both rules disabled");
 
     SetEnvironmentVariableW(L"TCNP_TEST_TRAIL", L"x|");
-    CheckEq(MakeDisplayName(L"Name %TCNP_TEST_TRAIL%", rules, st, L""),
+    CheckEq(MakeDisplayName(L"Name %TCNP_TEST_TRAIL%", rules, st, L"", LiveEnv),
             L"Name x", "trailing sanitised space trimmed");
     SetEnvironmentVariableW(L"TCNP_TEST_TRAIL", nullptr);
 }
@@ -429,6 +442,9 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"C:\\tmp\\x");
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L".md",
                                ini.c_str());
+    // Re-list so the snapshot used at copy time captures the env and config set
+    // above (content expansion uses the snapshot taken when the entry was listed).
+    ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
 
     std::wstring varRemote = L"\\Vars " + year + L".md";
     std::wstring varLocal  = outDir + L"\\Vars.md";
@@ -449,6 +465,25 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     rc = fsGetFileW(&noteRemote[0], &noteLocal[0], 0, nullptr);
     Check(rc == FS_FILE_OK && ReadTextFile(noteLocal) == "note",
           ".txt copied verbatim when only .md expansion is enabled");
+
+    // Environment snapshot: a %VAR% in content keeps the value captured at
+    // LISTING time even if the system variable changes before the copy.
+    {
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"AAA");
+        WriteUtf8File(ini, L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+                           L"[FileContents]\r\nReplaceContentVariables=.md\r\n");
+        ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\"); // snapshot AAA
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", L"BBB");          // changes later
+
+        std::wstring snapLocal = outDir + L"\\snap.md";
+        rc = fsGetFileW(&varRemote[0], &snapLocal[0], 0, nullptr);
+        std::string snapBody = ReadTextFile(snapLocal);
+        Check(rc == FS_FILE_OK
+                  && snapBody.find("U=AAA") != std::string::npos
+                  && snapBody.find("BBB") == std::string::npos,
+              "content uses the env value captured at listing, not a later one");
+        SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
+    }
 
     // Remove the key so later sections see the default (no expansion).
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", nullptr,

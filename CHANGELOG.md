@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A copied-out file now carries the same timestamps shown for it in the
   panel** instead of always the current time: the template file's own times
   by default, or the current time when `SetTimestampsToCurrentTime` is on.
+- **A single snapshot per listing now drives names, contents and timestamps.**
+  On every directory refresh the plugin captures one instant (local time +
+  environment block) and reuses it for that panel: the substituted names, the
+  later substitution inside copied-out file contents, and the copy timestamps
+  all use the same values. Previously contents and timestamps were resolved at
+  copy time, so a `$ss` or a `%VAR%` could differ between a file's name and its
+  contents when the clock ticked or a system variable changed between listing
+  and copy.
 
 ## [v1.1.0] – 2026-06-17
 

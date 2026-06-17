@@ -102,6 +102,7 @@ std::wstring StripSortingPrefix(const std::wstring& name)
 std::wstring ReplaceTemplateVariables(const std::wstring& name,
                                       const SYSTEMTIME&   localTime,
                                       const std::wstring& parentFolderName,
+                                      const EnvLookup&    env,
                                       bool                sanitizeInvalidChars)
 {
     static const std::wstring kParentToken = L"PARENT_FOLDER_NAME";
@@ -149,18 +150,14 @@ std::wstring ReplaceTemplateVariables(const std::wstring& name,
         }
 
         if (c == L'%') {
-            // %ENV_VAR% — case-insensitive, same semantics as
-            // ExpandEnvironmentStrings: an undefined variable is left in the
-            // name verbatim (including both percent signs).
+            // %ENV_VAR% — case-insensitive (the lookup handles casing). Same
+            // semantics as ExpandEnvironmentStrings: an undefined variable is
+            // left in the name verbatim (including both percent signs).
             size_t close = name.find(L'%', i + 1);
             if (close != std::wstring::npos && close > i + 1) {
                 std::wstring var = name.substr(i + 1, close - i - 1);
-                DWORD needed = GetEnvironmentVariableW(var.c_str(), nullptr, 0);
-                if (needed > 0) {
-                    std::wstring value(needed, L'\0');
-                    DWORD written = GetEnvironmentVariableW(var.c_str(),
-                                                            &value[0], needed);
-                    value.resize(written);
+                std::wstring value;
+                if (env && env(var, value)) {
                     out += maybeSanitize(value);
                 } else {
                     out += name.substr(i, close - i + 1);
@@ -184,7 +181,8 @@ std::wstring ReplaceTemplateVariables(const std::wstring& name,
 std::wstring MakeDisplayName(const std::wstring& templateName,
                              const NameRules&    rules,
                              const SYSTEMTIME&   localTime,
-                             const std::wstring& parentFolderName)
+                             const std::wstring& parentFolderName,
+                             const EnvLookup&    env)
 {
     std::wstring name = templateName;
 
@@ -192,7 +190,7 @@ std::wstring MakeDisplayName(const std::wstring& templateName,
         name = StripSortingPrefix(name);
 
     if (rules.replaceVariables)
-        name = ReplaceTemplateVariables(name, localTime, parentFolderName);
+        name = ReplaceTemplateVariables(name, localTime, parentFolderName, env);
 
     // Windows rejects filenames ending with a space or a dot; substitution
     // (sanitised values, removed tokens) can leave them behind.

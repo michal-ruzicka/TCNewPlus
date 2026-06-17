@@ -306,9 +306,14 @@ With the above, copying a `.md` or `.txt` template runs its contents
 through the same substitution as the names — except that characters
 invalid in filenames are **not** replaced with spaces inside content (a
 path from `%USERPROFILE%` keeps its `:` and `\`). `$PARENT_FOLDER_NAME`
-expands to the name of the containing template subfolder; the date and
-time are taken at copy time. Files of any other extension are copied byte
-for byte.
+expands to the name of the containing template subfolder. Files of any
+other extension are copied byte for byte.
+
+The date, time and environment-variable values are captured the moment the
+folder is **listed** (refresh with `Ctrl+R`), and the *same* snapshot is
+reused when you copy the file out — so a `$ss` or a `%VAR%` resolves to the
+identical value in the file's name and in its contents, even if the clock
+ticks or a system variable changes between the listing and the copy.
 
 Listed files are assumed to be **UTF-8** (a leading byte-order mark is
 preserved). A file that turns out not to be valid UTF-8 is copied verbatim
