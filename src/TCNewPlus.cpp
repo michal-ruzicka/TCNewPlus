@@ -33,6 +33,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -65,6 +66,11 @@ struct CaseInsensitiveLess {
 static std::map<std::wstring, std::wstring, CaseInsensitiveLess> g_virtualToReal;
 static std::mutex g_mapMutex;
 
+// Virtual paths that are "link to the templates folder" entries (the
+// ShowLinkToTemplatesDir feature). Opening one navigates TC to the real
+// templates directory rather than copying a file. Guarded by g_mapMutex.
+static std::set<std::wstring, CaseInsensitiveLess> g_linkPaths;
+
 struct VirtualEntry {
     WIN32_FIND_DATAW fd;       // cFileName already holds the display name
     std::wstring     realPath;
@@ -85,6 +91,9 @@ struct Config {
     // Extensions (".md", ".txt", …) whose file contents should have New+
     // variables expanded on copy. Empty by default — no in-content expansion.
     std::set<std::wstring, CaseInsensitiveLess> expandExtensions;
+    // Label for an extra root entry that links to the real templates folder
+    // (ShowLinkToTemplatesDir). Empty = no link entry shown.
+    std::wstring linkName;
 };
 
 // Splits a comma/semicolon-separated extension list into a set, trimming
@@ -156,6 +165,134 @@ static std::wstring UserConfigPath()
     return std::wstring(appdata) + L"\\GHISLER\\TCNewPlus.ini";
 }
 
+// Reads a whole text file into a wide string, honouring a byte-order mark
+// (UTF-8, UTF-16 LE or UTF-16 BE) and defaulting to UTF-8 when there is none.
+// We parse the INI ourselves instead of using GetPrivateProfileString because
+// that API treats a BOM-less file as ANSI (the system code page), which
+// mangles non-ASCII paths (e.g. a folder named "Osobní") in a UTF-8 INI.
+static std::wstring ReadTextFileToWide(const std::wstring& path)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return std::wstring();
+
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(h, &size);
+    std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+    if (!bytes.empty()) {
+        DWORD got = 0;
+        if (!ReadFile(h, &bytes[0], static_cast<DWORD>(bytes.size()), &got, nullptr))
+            got = 0;
+        bytes.resize(got);
+    }
+    CloseHandle(h);
+
+    auto u = [&](size_t i) { return static_cast<unsigned char>(bytes[i]); };
+
+    if (bytes.size() >= 2 && u(0) == 0xFF && u(1) == 0xFE) {           // UTF-16 LE
+        const size_t count = (bytes.size() - 2) / 2;
+        std::wstring w(count, L'\0');
+        memcpy(&w[0], bytes.data() + 2, count * 2);
+        return w;
+    }
+    if (bytes.size() >= 2 && u(0) == 0xFE && u(1) == 0xFF) {           // UTF-16 BE
+        const size_t count = (bytes.size() - 2) / 2;
+        std::wstring w(count, L'\0');
+        for (size_t i = 0; i < count; ++i)
+            w[i] = static_cast<wchar_t>((u(2 + 2 * i) << 8) | u(3 + 2 * i));
+        return w;
+    }
+
+    size_t off = (bytes.size() >= 3 && u(0) == 0xEF && u(1) == 0xBB && u(2) == 0xBF)
+                     ? 3 : 0;                                          // skip UTF-8 BOM
+    int len = static_cast<int>(bytes.size() - off);
+    if (len <= 0)
+        return std::wstring();
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, bytes.data() + off, len, nullptr, 0);
+    std::wstring w(wlen, L'\0');
+    if (wlen > 0)
+        MultiByteToWideChar(CP_UTF8, 0, bytes.data() + off, len, &w[0], wlen);
+    return w;
+}
+
+static std::wstring TrimWs(const std::wstring& s)
+{
+    size_t b = s.find_first_not_of(L" \t");
+    if (b == std::wstring::npos)
+        return std::wstring();
+    size_t e = s.find_last_not_of(L" \t");
+    return s.substr(b, e - b + 1);
+}
+
+// Finds [section] key=value in INI text (case-insensitive section and key).
+// Lines starting with ';' or '#' are comments. Surrounding double quotes are
+// stripped from the value. Returns true and sets `out` when found.
+static bool IniLookup(const std::wstring& text, const std::wstring& section,
+                      const std::wstring& key, std::wstring& out)
+{
+    std::wstring curSection;
+    size_t pos = 0;
+    const size_t n = text.size();
+
+    while (pos < n) {
+        size_t eol = text.find_first_of(L"\r\n", pos);
+        if (eol == std::wstring::npos)
+            eol = n;
+        std::wstring line = TrimWs(text.substr(pos, eol - pos));
+        pos = (eol < n) ? eol + 1 : n;
+
+        if (line.empty() || line[0] == L';' || line[0] == L'#')
+            continue;
+
+        if (line[0] == L'[') {
+            size_t close = line.find(L']');
+            if (close != std::wstring::npos)
+                curSection = line.substr(1, close - 1);
+            continue;
+        }
+
+        size_t eq = line.find(L'=');
+        if (eq == std::wstring::npos)
+            continue;
+
+        if (_wcsicmp(TrimWs(line.substr(0, eq)).c_str(), key.c_str()) == 0 &&
+            _wcsicmp(curSection.c_str(), section.c_str()) == 0) {
+            std::wstring val = TrimWs(line.substr(eq + 1));
+            if (val.size() >= 2 && val.front() == L'"' && val.back() == L'"')
+                val = val.substr(1, val.size() - 2);
+            out = val;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool IniLookupBool(const std::wstring& text, const std::wstring& section,
+                          const std::wstring& key, bool def)
+{
+    std::wstring v;
+    if (!IniLookup(text, section, key, v) || v.empty())
+        return def;
+    if (_wcsicmp(v.c_str(), L"0") == 0 || _wcsicmp(v.c_str(), L"false") == 0 ||
+        _wcsicmp(v.c_str(), L"no") == 0 || _wcsicmp(v.c_str(), L"off") == 0)
+        return false;
+    if (_wcsicmp(v.c_str(), L"1") == 0 || _wcsicmp(v.c_str(), L"true") == 0 ||
+        _wcsicmp(v.c_str(), L"yes") == 0 || _wcsicmp(v.c_str(), L"on") == 0)
+        return true;
+    return _wtoi(v.c_str()) != 0;
+}
+
+// Strips trailing path separators so e.g. a TemplatesPath written with a
+// trailing backslash ("...\Templates\") joins cleanly with child names.
+static std::wstring StripTrailingSeparators(std::wstring p)
+{
+    while (p.size() > 1 && (p.back() == L'\\' || p.back() == L'/'))
+        p.pop_back();
+    return p;
+}
+
 static Config LoadConfig()
 {
     Config cfg;
@@ -166,27 +303,32 @@ static Config LoadConfig()
     //   1. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
     //   2. <plugin install dir>\TCNewPlus.ini (system-wide; ships with the plugin)
     const std::wstring userIni = UserConfigPath();
-    const std::wstring ini =
+    const std::wstring iniPath =
         (!userIni.empty() &&
          GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
             ? userIni
             : dir + L"\\TCNewPlus.ini";
 
-    wchar_t value[4096] = L"";
-    GetPrivateProfileStringW(L"Templates", L"TemplatesPath", L"",
-                             value, ARRAYSIZE(value), ini.c_str());
-    cfg.templatesPath = value[0] ? ExpandEnvironment(value)
-                                 : dir + L"\\Templates";
+    const std::wstring ini = ReadTextFileToWide(iniPath);
+
+    std::wstring value;
+    cfg.templatesPath =
+        (IniLookup(ini, L"Templates", L"TemplatesPath", value) && !value.empty())
+            ? StripTrailingSeparators(ExpandEnvironment(value))
+            : dir + L"\\Templates";
 
     cfg.rules.replaceVariables =
-        GetPrivateProfileIntW(L"FileNames", L"ReplaceFilenameVariables", 1, ini.c_str()) != 0;
+        IniLookupBool(ini, L"FileNames", L"ReplaceFilenameVariables", true);
     cfg.rules.hideStartingDigits =
-        GetPrivateProfileIntW(L"FileNames", L"HideStartingDigits", 1, ini.c_str()) != 0;
+        IniLookupBool(ini, L"FileNames", L"HideStartingDigits", true);
 
-    wchar_t exts[2048] = L"";
-    GetPrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", L"",
-                             exts, ARRAYSIZE(exts), ini.c_str());
+    std::wstring exts;
+    IniLookup(ini, L"FileContents", L"ReplaceContentVariables", exts);
     cfg.expandExtensions = ParseExtensionList(exts);
+
+    // IniLookup already trims the value; an absent key or empty value leaves
+    // linkName empty, which disables the templates-folder link entry.
+    IniLookup(ini, L"Templates", L"ShowLinkToTemplatesDir", cfg.linkName);
 
     return cfg;
 }
@@ -233,9 +375,61 @@ static std::wstring MapLookup(const std::wstring& vpath)
     return (it != g_virtualToReal.end()) ? it->second : std::wstring();
 }
 
+// True if `vpath` is the virtual "link to the templates folder" entry.
+static bool IsTemplatesDirLink(const std::wstring& vpath)
+{
+    std::lock_guard<std::mutex> lock(g_mapMutex);
+    return g_linkPaths.count(vpath) != 0;
+}
+
 static bool EnumerateVirtualDir(const std::wstring& virtualDir,
                                 const Config&       cfg,
                                 std::vector<VirtualEntry>& out);
+
+// A display name is valid for the panel if it is non-empty and contains no
+// characters that are illegal in a Windows filename. Used to reject a bad
+// ShowLinkToTemplatesDir value (real template files can never carry such
+// characters, so only the user-typed link label needs checking).
+static bool IsValidEntryName(const std::wstring& name)
+{
+    if (name.empty())
+        return false;
+    for (wchar_t c : name) {
+        switch (c) {
+            case L'\\': case L'/': case L':': case L'*':
+            case L'?':  case L'"': case L'<': case L'>': case L'|':
+                return false;
+            default:
+                if (c < 0x20)
+                    return false;
+        }
+    }
+    return true;
+}
+
+// Ensures `display` is unique within a directory listing, appending " (2)",
+// " (3)", … before the extension on collision. Records the chosen name in
+// `usedNames`.
+static std::wstring MakeUniqueName(std::wstring display, bool isDir,
+                                   std::set<std::wstring, CaseInsensitiveLess>& usedNames)
+{
+    if (usedNames.count(display)) {
+        size_t dot = isDir ? std::wstring::npos : display.find_last_of(L'.');
+        std::wstring stem = (dot == std::wstring::npos) ? display : display.substr(0, dot);
+        std::wstring ext  = (dot == std::wstring::npos) ? L"" : display.substr(dot);
+        for (int ordinal = 2; ; ++ordinal) {
+            wchar_t suffix[16];
+            swprintf_s(suffix, L" (%d)", ordinal);
+            std::wstring candidate = stem + suffix + ext;
+            if (!usedNames.count(candidate)) {
+                display = candidate;
+                break;
+            }
+        }
+    }
+    usedNames.insert(display);
+    return display;
+}
 
 // Maps a virtual path to the real template path, enumerating ancestor
 // directories on demand (TC may call FsGetFile without a prior listing in
@@ -270,8 +464,11 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW((realDir + L"\\*").c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE)
-        return GetLastError() == ERROR_FILE_NOT_FOUND; // empty directory
+    // INVALID_HANDLE_VALUE with ERROR_FILE_NOT_FOUND means the directory
+    // exists but is empty — keep going (we may still add the link entry).
+    // Any other error means the directory is missing/unreadable.
+    if (hFind == INVALID_HANDLE_VALUE && GetLastError() != ERROR_FILE_NOT_FOUND)
+        return false;
 
     // One time snapshot per directory listing so all names in the panel
     // carry the same timestamp.
@@ -285,53 +482,75 @@ static bool EnumerateVirtualDir(const std::wstring& virtualDir,
 
     std::set<std::wstring, CaseInsensitiveLess> usedNames;
 
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
-            continue;
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
+                continue;
 
-        std::wstring display =
-            MakeDisplayName(fd.cFileName, cfg.rules, now, parentName);
-
-        // Two templates can collapse to the same display name (e.g. "1. A"
-        // and "2. A") — disambiguate with " (2)" before the extension.
-        if (usedNames.count(display)) {
             const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            size_t dot = isDir ? std::wstring::npos : display.find_last_of(L'.');
-            std::wstring stem = (dot == std::wstring::npos) ? display : display.substr(0, dot);
-            std::wstring ext  = (dot == std::wstring::npos) ? L"" : display.substr(dot);
-            for (int ordinal = 2; ; ++ordinal) {
-                wchar_t suffix[16];
-                swprintf_s(suffix, L" (%d)", ordinal);
-                std::wstring candidate = stem + suffix + ext;
-                if (!usedNames.count(candidate)) {
-                    display = candidate;
-                    break;
-                }
+            std::wstring display = MakeUniqueName(
+                MakeDisplayName(fd.cFileName, cfg.rules, now, parentName),
+                isDir, usedNames);
+
+            VirtualEntry entry;
+            entry.fd = fd;
+            wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
+            entry.fd.cAlternateFileName[0] = L'\0';
+            // The copy TC creates must be writable even if the template is
+            // marked read-only on disk — New+ copies are ordinary new files.
+            entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+            entry.realPath = realDir + L"\\" + fd.cFileName;
+
+            // Key the map by the exact name handed back to TC (cFileName, which
+            // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with
+            // the name TC echoes back always matches.
+            {
+                std::lock_guard<std::mutex> lock(g_mapMutex);
+                g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
             }
+
+            out.push_back(std::move(entry));
+        } while (FindNextFileW(hFind, &fd));
+
+        FindClose(hFind);
+    }
+
+    // Optional "link to the templates folder" entry (ShowLinkToTemplatesDir),
+    // shown only at the root. Its label follows the same naming rules as
+    // template files (prefix hiding + variable substitution); an invalid or
+    // empty resulting name is skipped. Opening it navigates TC to the real
+    // templates folder (handled in FsExecuteFileW).
+    if (virtualDir == L"\\" && !cfg.linkName.empty()) {
+        std::wstring linkDisplay =
+            MakeDisplayName(cfg.linkName, cfg.rules, now, std::wstring());
+        if (IsValidEntryName(linkDisplay)) {
+            linkDisplay = MakeUniqueName(linkDisplay, /*isDir=*/false, usedNames);
+
+            VirtualEntry link;
+            link.fd = {};
+            link.fd.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+            FILETIME ft;
+            GetSystemTimeAsFileTime(&ft);
+            link.fd.ftCreationTime = link.fd.ftLastAccessTime =
+                link.fd.ftLastWriteTime = ft;
+            wcsncpy_s(link.fd.cFileName, linkDisplay.c_str(), _TRUNCATE);
+            link.fd.cAlternateFileName[0] = L'\0';
+
+            // Track the link ONLY in g_linkPaths — deliberately NOT in
+            // g_virtualToReal. If it were resolvable to a real path, TC could
+            // treat it as a browsable directory (e.g. "open in new tab")
+            // and FsFindFirstW would re-list the templates folder as a phantom
+            // subdirectory. It is a file entry; Enter goes through
+            // FsExecuteFileW, which redirects to the real folder.
+            const std::wstring linkVPath = JoinVirtual(L"\\", link.fd.cFileName);
+            {
+                std::lock_guard<std::mutex> lock(g_mapMutex);
+                g_linkPaths.insert(linkVPath);
+            }
+            out.push_back(std::move(link));
         }
-        usedNames.insert(display);
+    }
 
-        VirtualEntry entry;
-        entry.fd = fd;
-        wcsncpy_s(entry.fd.cFileName, display.c_str(), _TRUNCATE);
-        entry.fd.cAlternateFileName[0] = L'\0';
-        // The copy TC creates must be writable even if the template is
-        // marked read-only on disk — New+ copies are ordinary new files.
-        entry.fd.dwFileAttributes &= ~FILE_ATTRIBUTE_READONLY;
-        entry.realPath = realDir + L"\\" + fd.cFileName;
-
-        // Key the map by the exact name handed back to TC (cFileName, which
-        // wcsncpy_s may have truncated at MAX_PATH) so a later lookup with the
-        // name TC echoes back always matches.
-        {
-            std::lock_guard<std::mutex> lock(g_mapMutex);
-            g_virtualToReal[JoinVirtual(virtualDir, entry.fd.cFileName)] = entry.realPath;
-        }
-
-        out.push_back(std::move(entry));
-    } while (FindNextFileW(hFind, &fd));
-
-    FindClose(hFind);
     return true;
 }
 
@@ -377,7 +596,17 @@ HANDLE __stdcall FsFindFirstW(WCHAR* Path, WIN32_FIND_DATAW* FindData)
     auto* ctx = new FindContext();
     if (!EnumerateVirtualDir(virtualDir, cfg, ctx->entries)) {
         delete ctx;
-        SetLastError(ERROR_PATH_NOT_FOUND);
+        // A failing ROOT means the templates folder itself is missing or
+        // unreadable — a real configuration error, so report "path not found".
+        //
+        // A failing SUBPATH (a typed non-existent name, or the link entry
+        // opened as a folder) is reported as an empty directory instead. TC
+        // treats ERROR_NO_MORE_FILES as "exists but empty" and stays inside
+        // the plugin showing an empty panel — one Backspace from the root —
+        // rather than bouncing the panel to an unrelated directory from its
+        // history, which a generic error makes it do.
+        SetLastError(virtualDir == L"\\" ? ERROR_PATH_NOT_FOUND
+                                         : ERROR_NO_MORE_FILES);
         return INVALID_HANDLE_VALUE;
     }
 
@@ -513,8 +742,13 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
     if (CopyFlags & FS_COPYFLAGS_MOVE)
         return FS_FILE_NOTSUPPORTED;
 
-    const Config cfg = LoadConfig();
     const std::wstring vpath = NormalizeVirtualPath(RemoteName);
+
+    // The templates-folder link is not a real file — it cannot be copied out.
+    if (IsTemplatesDirLink(vpath))
+        return FS_FILE_NOTSUPPORTED;
+
+    const Config cfg = LoadConfig();
     const std::wstring realPath = ResolveRealPath(vpath, cfg);
     if (realPath.empty())
         return FS_FILE_NOTFOUND;
@@ -606,6 +840,17 @@ int __stdcall FsGetFileW(WCHAR* RemoteName, WCHAR* LocalName, int CopyFlags,
 int __stdcall FsExecuteFileW(HWND MainWin, WCHAR* RemoteName, WCHAR* Verb)
 {
     if (_wcsicmp(Verb, L"open") == 0) {
+        const std::wstring vpath = NormalizeVirtualPath(RemoteName);
+
+        if (IsTemplatesDirLink(vpath)) {
+            // The templates-folder link: navigate TC straight to the real
+            // folder. FS_EXEC_SYMLINK accepts a local path (drive letter or
+            // UNC) of at most MAX_PATH-1 characters in RemoteName.
+            const std::wstring target = LoadConfig().templatesPath;
+            lstrcpynW(RemoteName, target.c_str(), MAX_PATH);
+            return FS_EXEC_SYMLINK;
+        }
+
         // Let TC download the file to a temporary location and open it there.
         return FS_EXEC_YOURSELF;
     }
@@ -635,6 +880,21 @@ int __stdcall FsExtractCustomIconW(WCHAR* RemoteName, int ExtractFlags, HICON* T
     // ".." / the root to TC's default icon.
     if (vpath == L"\\")
         return FS_ICON_USEDEFAULT;
+
+    // The templates-folder link has no real file of its own; show a generic
+    // folder icon derived from attributes (no disk access).
+    if (IsTemplatesDirLink(vpath)) {
+        SHFILEINFOW sfi = {};
+        UINT flags = SHGFI_ICON | SHGFI_USEFILEATTRIBUTES |
+                     ((ExtractFlags & FS_ICONFLAG_SMALL) ? SHGFI_SMALLICON
+                                                         : SHGFI_LARGEICON);
+        if (SHGetFileInfoW(L"folder", FILE_ATTRIBUTE_DIRECTORY, &sfi, sizeof(sfi),
+                           flags) && sfi.hIcon) {
+            *TheIcon = sfi.hIcon;
+            return FS_ICON_EXTRACTED_DESTROY;
+        }
+        return FS_ICON_USEDEFAULT;
+    }
 
     const std::wstring realPath = ResolveRealPath(vpath, LoadConfig());
     if (realPath.empty())
@@ -721,9 +981,17 @@ int __stdcall FsGetFile(char* RemoteName, char* LocalName, int CopyFlags,
 
 int __stdcall FsExecuteFile(HWND MainWin, char* RemoteName, char* Verb)
 {
-    std::wstring remote = AnsiToWide(RemoteName);
-    std::wstring verb   = AnsiToWide(Verb);
-    return FsExecuteFileW(MainWin, &remote[0], &verb[0]);
+    // Use a MAX_PATH buffer: FsExecuteFileW may write a redirect path back into
+    // RemoteName for FS_EXEC_SYMLINK (the templates-folder link), which would
+    // overflow a buffer sized to the original name.
+    wchar_t remote[MAX_PATH];
+    lstrcpynW(remote, AnsiToWide(RemoteName).c_str(), MAX_PATH);
+    std::wstring verb = AnsiToWide(Verb);
+
+    int rc = FsExecuteFileW(MainWin, remote, &verb[0]);
+    if (rc == FS_EXEC_SYMLINK)
+        WideCharToMultiByte(CP_ACP, 0, remote, -1, RemoteName, MAX_PATH, nullptr, nullptr);
+    return rc;
 }
 
 int __stdcall FsExtractCustomIcon(char* RemoteName, int ExtractFlags, HICON* TheIcon)

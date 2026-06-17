@@ -214,11 +214,14 @@ customise just for your user account, copy that file to
 is then ignored entirely. The chosen file is re-read on every listing of
 the plugin root — edits take effect on the next refresh (**Ctrl+R**).
 Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
-in any value.
+in any value. The INI is read as **UTF-8** (a UTF-8 or UTF-16 byte-order
+mark is also honoured), so paths with accented or other non-ASCII
+characters work — just save the file as UTF-8 (the default in most editors).
 
 | Section | Key | Default | Meaning |
 | --- | --- | --- | --- |
 | `[Templates]` | `TemplatesPath` | `Templates` folder next to the plugin DLL | Folder whose contents appear as templates |
+| `[Templates]` | `ShowLinkToTemplatesDir` | *(empty)* | Label for an extra entry that opens the real templates folder (see below) |
 | `[FileNames]` | `ReplaceFilenameVariables` | `1` | Substitute the variables described above in names |
 | `[FileNames]` | `HideStartingDigits` | `1` | Strip the sorting prefix (leading digits, spaces, dots) |
 | `[FileContents]` | `ReplaceContentVariables` | *(empty)* | Comma-separated extensions whose **file contents** also get variables expanded (see below) |
@@ -235,6 +238,30 @@ the New+ templates folder:
 [Templates]
 TemplatesPath=%LocalAppData%\Microsoft\PowerToys\NewPlus\Templates
 ```
+
+#### Link to the Templates Folder
+
+Like the *Open templates folder* item in the PowerToys New+ menu, the plugin
+can show an extra entry in `\\\TCNewPlus` that takes you straight to the real
+folder your templates live in. Set `ShowLinkToTemplatesDir` (under
+`[Templates]`) to the label you want that entry to have:
+
+```ini
+[Templates]
+ShowLinkToTemplatesDir=0. Open templates folder
+```
+
+Pressing **Enter** on the entry switches the panel to the actual templates
+folder on disk (whatever `TemplatesPath` resolves to). The label follows the
+same naming rules as templates — variables are expanded and the sorting
+prefix is hidden per `HideStartingDigits`, so the `0. ` above just sorts it to
+the top when prefixes are kept. The label must be a valid file name (no
+`\ / : * ? " < > |`); an empty or invalid value (the default) shows no link.
+
+The entry is a **shortcut, not a browsable folder**: use **Enter** to follow
+it. Operations that open a folder *without* "executing" it (for example
+"open in a new tab") do not follow the shortcut — they simply do nothing,
+because there is no virtual folder to descend into.
 
 #### Variable Expansion Inside File Contents
 
@@ -316,6 +343,23 @@ disk to give them distinct names.
 
 **`F6` (move) fails.** By design — moving would delete the template. The
 virtual file system is read-only; use `F5` (copy).
+
+**The right-click menu shows Print / Rename / Move / Delete.** That menu is
+built by Total Commander and the Windows shell, not by the plugin — the
+file-system-plugin interface has no hook to add or remove individual
+context-menu items. They are harmless here: the plugin exposes no
+rename/move/delete operations (it doesn't export those functions), so they
+cannot change your templates — manage templates in the real folder on disk
+(see [Managing Templates](#managing-templates)). Hiding the Windows shell
+verbs is a Total Commander configuration choice, independent of this plugin.
+
+**I navigated to a path under `\\\TCNewPlus` that doesn't exist and got an
+empty panel.** That is intentional: a non-existent sub-path shows an empty
+listing so the panel stays inside the plugin instead of jumping back to a
+previous directory. Press **Backspace** (or `cd ..`) to return to the
+template list. The same applies if you "open in a new tab" on the
+templates-folder link entry — use **Enter** on it instead, which follows it
+to the real folder.
 
 **Where does this entry come from?** Press **Alt+Enter** (Properties) on
 any entry to see the real template path on disk and the active templates

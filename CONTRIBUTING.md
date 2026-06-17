@@ -124,7 +124,7 @@ compiler output":
 
 | Parameter | Pinned to | Files that must match |
 |---|---|---|
-| Exact `cl.exe` version | `19.51.36247` | `build.cmd` (`EXPECTED_CL`) |
+| Exact `cl.exe` version | `19.51.36248` | `build.cmd` (`EXPECTED_CL`) |
 | MSVC toolset (major.minor) | `14.51` | `build.cmd` (`CMAKE_T`), `.vsconfig`, CI workflow |
 | Windows SDK | `10.0.26100.0` | `build.cmd` (`CMAKE_SDK`), `.vsconfig`, CI workflow |
 

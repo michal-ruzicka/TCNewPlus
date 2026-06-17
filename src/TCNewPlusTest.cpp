@@ -195,6 +195,7 @@ using PFsFindNextW       = BOOL   (__stdcall*)(HANDLE, WIN32_FIND_DATAW*);
 using PFsFindClose       = int    (__stdcall*)(HANDLE);
 using PFsGetFileW        = int    (__stdcall*)(WCHAR*, WCHAR*, int, RemoteInfoStruct*);
 using PFsExtractIconW    = int    (__stdcall*)(WCHAR*, int, HICON*);
+using PFsExecuteW        = int    (__stdcall*)(HWND, WCHAR*, WCHAR*);
 
 static int __stdcall TestProgress(int, WCHAR*, WCHAR*, int)
 {
@@ -209,6 +210,28 @@ static void WriteTextFile(const std::wstring& path, const char* content)
     if (h != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
         WriteFile(h, content, static_cast<DWORD>(strlen(content)), &written, nullptr);
+        CloseHandle(h);
+    }
+}
+
+// Writes a UTF-8 file (no BOM) from a wide string — the encoding a modern
+// text editor produces for an INI. Used to verify the plugin reads non-ASCII
+// config values from a UTF-8 INI rather than misreading them as ANSI.
+static void WriteUtf8File(const std::wstring& path, const std::wstring& wcontent)
+{
+    int n = WideCharToMultiByte(CP_UTF8, 0, wcontent.data(),
+                                static_cast<int>(wcontent.size()),
+                                nullptr, 0, nullptr, nullptr);
+    std::string bytes(n, '\0');
+    if (n > 0)
+        WideCharToMultiByte(CP_UTF8, 0, wcontent.data(),
+                            static_cast<int>(wcontent.size()),
+                            &bytes[0], n, nullptr, nullptr);
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(h, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
         CloseHandle(h);
     }
 }
@@ -317,10 +340,11 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     auto fsFindClose  = reinterpret_cast<PFsFindClose>(GetProcAddress(dll, "FsFindClose"));
     auto fsGetFileW   = reinterpret_cast<PFsGetFileW>(GetProcAddress(dll, "FsGetFileW"));
     auto fsIconW      = reinterpret_cast<PFsExtractIconW>(GetProcAddress(dll, "FsExtractCustomIconW"));
+    auto fsExecW      = reinterpret_cast<PFsExecuteW>(GetProcAddress(dll, "FsExecuteFileW"));
 
-    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW,
+    Check(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW && fsExecW,
           "all WFX entry points exported");
-    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW)) {
+    if (!(fsInitW && fsFindFirstW && fsFindNextW && fsFindClose && fsGetFileW && fsIconW && fsExecW)) {
         FreeLibrary(dll);
         return;
     }
@@ -430,6 +454,98 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     WritePrivateProfileStringW(L"FileContents", L"ReplaceContentVariables", nullptr,
                                ini.c_str());
     SetEnvironmentVariableW(L"TCNP_TEST_CONTENT", nullptr);
+
+    // --- Non-ASCII TemplatesPath read from a UTF-8 INI ---------------------
+    // Regression: a templates path with non-ASCII characters (e.g. a folder
+    // named "Šablóny") in a UTF-8-encoded INI must be read correctly. The old
+    // GetPrivateProfileString-based reader misread BOM-less UTF-8 as ANSI.
+    {
+        std::wstring naDir = fixture + L"\\Šablóny"; // "Šablóny"
+        CreateDirectoryW(naDir.c_str(), nullptr);
+        WriteTextFile(naDir + L"\\Accented Template.txt", "x");
+
+        std::wstring iniText = L"[Templates]\r\nTemplatesPath=" + naDir + L"\r\n";
+        WriteUtf8File(ini, iniText);
+
+        auto naListing =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(ContainsName(naListing, L"Accented Template.txt"),
+              "non-ASCII TemplatesPath from a UTF-8 INI is read correctly");
+    }
+
+    // A trailing backslash on TemplatesPath must not break enumeration.
+    {
+        std::wstring iniText =
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\\\r\n";
+        WriteUtf8File(ini, iniText);
+        auto trailing =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(ContainsName(trailing, L"Plain.txt"),
+              "trailing backslash on TemplatesPath is tolerated");
+    }
+
+    // --- Templates-folder link entry (ShowLinkToTemplatesDir) --------------
+    {
+        WriteUtf8File(ini,
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+            L"ShowLinkToTemplatesDir=0. Open Templates\r\n");
+
+        auto withLink =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        // HideStartingDigits defaults on, so "0. " is stripped. ContainsName's
+        // default expects a file (not a directory) — Enter must open, not enter.
+        Check(ContainsName(withLink, L"Open Templates"),
+              "ShowLinkToTemplatesDir adds a root link entry (as a file)");
+
+        // Opening the link returns FS_EXEC_SYMLINK pointing at the real folder.
+        wchar_t rn[MAX_PATH];
+        lstrcpynW(rn, L"\\Open Templates", MAX_PATH);
+        std::wstring openVerb = L"open";
+        int erc = fsExecW(nullptr, rn, &openVerb[0]);
+        Check(erc == FS_EXEC_SYMLINK, "opening the link returns FS_EXEC_SYMLINK");
+        Check(std::wstring(rn) == templates,
+              "link redirects to the real templates folder");
+
+        // The link is a file, not a browsable directory: trying to enter it
+        // (e.g. "open in new tab") must not re-list the templates folder.
+        auto intoLink = ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose,
+                                       L"\\Open Templates");
+        Check(intoLink.empty(), "the link entry cannot be entered as a directory");
+
+        // Copying the link out is refused (it is not a real file).
+        std::wstring linkRemote = L"\\Open Templates";
+        std::wstring linkLocal  = outDir + L"\\link-copy";
+        int crc = fsGetFileW(&linkRemote[0], &linkLocal[0], 0, nullptr);
+        Check(crc == FS_FILE_NOTSUPPORTED, "copying the link entry is refused");
+    }
+
+    // A non-existent subpath lists nothing and is reported as an EMPTY
+    // directory (ERROR_NO_MORE_FILES), not a missing one — so TC stays inside
+    // the plugin instead of jumping to a previous directory from history.
+    {
+        WIN32_FIND_DATAW fd;
+        std::wstring bogus = L"\\zzz-does-not-exist";
+        SetLastError(0);
+        HANDLE h = fsFindFirstW(&bogus[0], &fd);
+        Check(h == INVALID_HANDLE_VALUE, "non-existent subpath returns no handle");
+        Check(GetLastError() == ERROR_NO_MORE_FILES,
+              "non-existent subpath reported as empty (no history jump)");
+        if (h != INVALID_HANDLE_VALUE)
+            fsFindClose(h);
+    }
+
+    // Empty value disables the link entry (default behaviour).
+    {
+        WriteUtf8File(ini,
+            L"[Templates]\r\nTemplatesPath=" + templates + L"\r\n"
+            L"ShowLinkToTemplatesDir=\r\n");
+        auto noLink =
+            ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+        Check(!ContainsName(noLink, L"Open Templates"),
+              "empty ShowLinkToTemplatesDir shows no link entry");
+        Check(ContainsName(noLink, L"Plain.txt"),
+              "normal entries still listed when the link is disabled");
+    }
 
     // --- Per-user INI precedence over the plugin-dir INI -------------------
     // A %APPDATA%\GHISLER\TCNewPlus.ini, when present, must win entirely over
