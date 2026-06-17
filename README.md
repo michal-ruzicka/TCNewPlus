@@ -32,6 +32,8 @@ collection between Explorer's context menu and Total Commander.
 > It is off by default, so the plugin stays a faithful New+ equivalent
 > until you opt in.
 
+![TCNewPlus shown on Markdown template](TCNewPlus.gif)
+
 **Project page:** <https://github.com/michal-ruzicka/TCNewPlus> — source
 code, releases and issue tracker.
 
@@ -348,6 +350,35 @@ Listed files are assumed to be **UTF-8** (a leading byte-order mark is
 preserved). A file that turns out not to be valid UTF-8 is copied verbatim
 rather than risk corrupting it.
 
+#### Button on Toolbar and Keyboard Shortcut
+
+A keyboard shortcut that opens the templates in a new tab in the other panel
+can be defined in the **Configuration → Options → Misc.** menu. This example
+uses `Ctrl+N`, as can be seen in the following image.
+
+![TCNewPlus `Ctrl+N` hotkey assignment](doc/hotkey-assignment.png)
+
+The hotkey calls the custom command `em_tcnewplus`, which can be configured in
+the `usercmd.ini` file as shown in the next image.
+
+![Custom `em_tcnewplus` command in `usercmd.ini`](doc/command-definition.png)
+
+Its definition is as follows:
+
+![Custom `em_tcnewplus` command definition](doc/command-parameters.png)
+
+- **Command: `%COMMANDER_EXE%`** — calls Total Commander itself.
+- **Parameters: `/O /T /S /R="\\\TCNewPlus\"`** — opens `\\\TCNewPlus\` in a new
+  tab in the other panel of the running TC instance.
+- **Icon file: `C:\Program Files\Total Commander\plugins\wfx\TCNewPlus\TCNewPlus.wfx64`**
+  — uses the TCNewPlus icon. Adjust the path if your plugin installation
+  directory differs.
+- **Tooltip:** optional — use any description you find useful.
+
+A toolbar button can be added the same way, as shown in the next picture.
+
+![TCNewPlus button on the TC toolbar](doc/toolbar-button.png)
+
 ### Differences from PowerToys New+
 
 The plugin reimplements the New+ naming rules on top of Total Commander's
@@ -413,9 +444,12 @@ template list. The same applies if you "open in a new tab" on the
 templates-folder link entry — use **Enter** on it instead, which follows it
 to the real folder.
 
-**Where does this entry come from?** Press **Alt+Enter** (Properties) on
-any entry to see the real template path on disk and the active templates
-folder.
+**Where does this entry come from? / Why isn't my setting applied?** Press
+**Alt+Enter** (Properties) on any entry to see the real template path on disk,
+the active templates folder, *which* `TCNewPlus.ini` is actually in effect
+(and whether it exists), and the parsed value of every setting. This makes it
+obvious when a per-user `%APPDATA%\GHISLER\TCNewPlus.ini` is shadowing the
+shipped one, or when a key was put in the wrong section.
 
 ## Contributing
 
