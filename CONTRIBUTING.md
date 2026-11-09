@@ -393,7 +393,7 @@ plugin DLL (check TC's *Configuration → Options → Plugins → File system
 plugins → Configure* for the installed path); the first file that exists
 wins entirely — keys are not merged. The chosen file is re-read on every
 root listing, so `Ctrl+R` in the plugin panel applies edits. A stale
-per-user INI silently shadowing the shipped one is the usual culprit.
+per-user INI silently shadowing one next to the plugin is the usual culprit.
 
 **Reproduce outside TC.** `TCNewPlusTest.exe <path-to-wfx>` exercises the
 full listing/copy pipeline against a temporary template tree without

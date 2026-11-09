@@ -214,12 +214,20 @@ files:
 In a standard installation the first two are the same file; a portable Total
 Commander keeps its `TCNewPlus.ini` next to its `wincmd.ini`.
 
-The plugin ships only `TCNewPlus.sample.ini`, which is never read and has
-every option commented out; without an INI all defaults apply. To customise
-just for your user account, copy the sample to
-`%APPDATA%\GHISLER\TCNewPlus.ini` and edit the copy; a system-wide file
-is then ignored entirely. Updates of the plugin leave your `TCNewPlus.ini`
-alone. The chosen file is re-read on every listing of
+The plugin needs no INI: it ships only `TCNewPlus.sample.ini`, which is never
+read and has every option commented out, and without an INI all defaults
+apply. To change a setting:
+
+1. Take `TCNewPlus.sample.ini` from the plugin's folder (**Configuration →
+   Options → Plugins → File system plugins → Configure** shows where it is).
+2. Copy it as `TCNewPlus.ini` to the folder of Total Commander's `wincmd.ini`.
+   In a standard installation that is `%APPDATA%\GHISLER`; in a portable one,
+   `cd %COMMANDER_INI%\..` in Total Commander's command line takes you there.
+3. Edit the copy.
+
+A copy in the plugin's folder is the system-wide default, and is ignored
+entirely while either of the other two exists. Updates of the plugin leave
+your `TCNewPlus.ini` alone, and the plugin never creates one. The chosen file is re-read on every listing of
 the plugin root — edits take effect on the next refresh (**Ctrl+R**).
 Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
 in any value. The INI is read as **UTF-8** (a UTF-8 or UTF-16 byte-order
@@ -417,7 +425,7 @@ file-system-plugin model, which leads to a few deliberate differences:
 empty. Check `TemplatesPath` in `TCNewPlus.ini` (the default is the
 `Templates` folder next to the plugin DLL) and refresh with `Ctrl+R`. If
 you have a `%APPDATA%\GHISLER\TCNewPlus.ini`, that file is used instead of
-the one shipped with the plugin — edit whichever one is in effect.
+one next to the plugin — edit whichever one is in effect.
 
 **A copied file still contains `$YYYY` in its name.** Either
 `ReplaceFilenameVariables=0` is set in the INI, or the pattern is not one of
@@ -454,8 +462,8 @@ to the real folder.
 **Alt+Enter** (Properties) on any entry to see the real template path on disk,
 the active templates folder, *which* `TCNewPlus.ini` is actually in effect
 (and whether it exists), and the parsed value of every setting. This makes it
-obvious when a per-user `%APPDATA%\GHISLER\TCNewPlus.ini` is shadowing the
-shipped one, or when a key was put in the wrong section.
+obvious when a per-user `%APPDATA%\GHISLER\TCNewPlus.ini` is shadowing one
+next to the plugin, or when a key was put in the wrong section.
 
 ## Contributing
 

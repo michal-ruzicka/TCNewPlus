@@ -140,7 +140,9 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
   per-key merge. The ZIP ships only `TCNewPlus.sample.ini`: Total Commander's
   installer overwrites what the ZIP carries, so a shipped `.ini` would replace
-  the user's settings on every update. The default `TemplatesPath` stays relative to the DLL
+  the user's settings on every update.
+  The plugin never creates the INI itself: it is optional, the defaults live in
+  the code, and whoever wants one copies the sample where it suits them. The default `TemplatesPath` stays relative to the DLL
   directory regardless of which INI wins (that's where the samples ship).
 - **The templates-folder link** (`[Templates] ShowLinkToTemplatesDir`) is an
   extra root entry added in `EnumerateVirtualDir` (root only). It is tracked
