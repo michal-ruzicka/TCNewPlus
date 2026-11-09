@@ -25,7 +25,7 @@
  *
  * Configuration is read from TCNewPlus.ini next to the plugin DLL on every
  * root listing, so edits take effect on the next Ctrl+R. See the shipped
- * INI for the available keys.
+ * TCNewPlus.sample.ini for the available keys.
  */
 
 #include "fsplugin.h"
@@ -380,7 +380,7 @@ static Config LoadConfig()
     // Lookup order, mirroring TCOfficeView: the first file that exists is
     // used in full — settings are NOT merged across the two.
     //   1. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
-    //   2. <plugin install dir>\TCNewPlus.ini (system-wide; ships with the plugin)
+    //   2. <plugin install dir>\TCNewPlus.ini (system-wide)
     const std::wstring userIni = UserConfigPath();
     const std::wstring iniPath =
         (!userIni.empty() &&

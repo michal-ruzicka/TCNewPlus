@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Updating the plugin no longer overwrites your settings.** The release ZIP
+  now carries `TCNewPlus.sample.ini` instead of `TCNewPlus.ini`, so an update
+  leaves a `TCNewPlus.ini` in the plugin folder alone. To change settings, copy
+  the sample to `TCNewPlus.ini` and edit the copy (see *Configuration* in the
+  README). A `TCNewPlus.ini` left there by an earlier version keeps working.
+
 - **The build is pinned to one Visual Studio release.** CI and
   `setup-build-environment-example.cmd` now install Build Tools 18.11.2 from
   its fixed-version bootstrapper, checked by SHA-256, instead of whatever the

@@ -68,7 +68,7 @@ src/
   fsplugin.h          - WFX plugin API (subset used here)
   app.manifest        - test EXE manifest (long paths)
   pluginst.inf        - TC auto-installer metadata; canonical version source
-  TCNewPlus.ini       - sample config: [Templates] TemplatesPath;
+  TCNewPlus.sample.ini - sample config, never read: [Templates] TemplatesPath;
                         [FileNames] ReplaceFilenameVariables, HideStartingDigits;
                         [FileContents] ReplaceContentVariables
 build/                - CMake out-of-source build trees (gitignored)
@@ -134,7 +134,9 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
   stop applying on `Ctrl+R`. Lookup order mirrors TCOfficeView:
   `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user) wins over
   `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
-  per-key merge. The default `TemplatesPath` stays relative to the DLL
+  per-key merge. The ZIP ships only `TCNewPlus.sample.ini`: Total Commander's
+  installer overwrites what the ZIP carries, so a shipped `.ini` would replace
+  the user's settings on every update. The default `TemplatesPath` stays relative to the DLL
   directory regardless of which INI wins (that's where the samples ship).
 - **The templates-folder link** (`[Templates] ShowLinkToTemplatesDir`) is an
   extra root entry added in `EnumerateVirtualDir` (root only). It is tracked

@@ -21,7 +21,8 @@ REM     TCNewPlus.wfx64                 (64-bit plugin DLL)
 REM     Templates\                      (sample template set)
 REM     sha256sums.sha256               (SHA-256 of every other staged file)
 REM     pluginst.inf                    (TC auto-installer metadata)
-REM     TCNewPlus.ini                   (sample config)
+REM     TCNewPlus.sample.ini            (sample config; never overwrites a
+REM                                      user's TCNewPlus.ini on update)
 REM     *.md                            (all repo-root Markdown docs)
 REM   dist\
 REM     TCNewPlus.v<version>.zip        (distributable bundle)
@@ -166,7 +167,7 @@ mkdir "%STAGE%"
 copy /Y "%BUILD%\x64\TCNewPlus.wfx64"  "%STAGE%\"  >nul
 copy /Y "%BUILD%\x86\TCNewPlus.wfx"    "%STAGE%\"  >nul
 copy /Y "%SRC%\pluginst.inf"           "%STAGE%\"  >nul
-copy /Y "%SRC%\TCNewPlus.ini"          "%STAGE%\"  >nul
+copy /Y "%SRC%\TCNewPlus.sample.ini"   "%STAGE%\"  >nul
 copy /Y "%ROOT%\*.md"                  "%STAGE%\"  >nul
 xcopy /E /I /Q "%ROOT%\templates" "%STAGE%\Templates" >nul
 if errorlevel 1 goto :error

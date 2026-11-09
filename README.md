@@ -207,13 +207,14 @@ and uses the **first one that exists** — values are not merged across
 files:
 
 1. `%APPDATA%\GHISLER\TCNewPlus.ini` — per-user override
-2. `<plugin install dir>\TCNewPlus.ini` — system-wide default, shipped
-   with the plugin
+2. `<plugin install dir>\TCNewPlus.ini` — system-wide default
 
-The shipped INI has every option commented out, so all defaults apply. To
-customise just for your user account, copy that file to
-`%APPDATA%\GHISLER\TCNewPlus.ini` and edit the copy; the system-wide file
-is then ignored entirely. The chosen file is re-read on every listing of
+The plugin ships only `TCNewPlus.sample.ini`, which is never read and has
+every option commented out; without an INI all defaults apply. To customise
+just for your user account, copy the sample to
+`%APPDATA%\GHISLER\TCNewPlus.ini` and edit the copy; a system-wide file
+is then ignored entirely. Updates of the plugin leave your `TCNewPlus.ini`
+alone. The chosen file is re-read on every listing of
 the plugin root — edits take effect on the next refresh (**Ctrl+R**).
 Environment variables (`%LocalAppData%`, `%UserProfile%`, …) are expanded
 in any value. The INI is read as **UTF-8** (a UTF-8 or UTF-16 byte-order
