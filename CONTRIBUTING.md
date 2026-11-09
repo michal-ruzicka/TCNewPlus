@@ -57,7 +57,8 @@ sources under `src\`, **runs the test executable for each bitness** (a failing
 test fails the build), and packages the artifacts into
 `dist\TCNewPlus.v<version>.zip` — the same auto-install bundle described
 in *Installation*. The version is read from `src\pluginst.inf` as the single
-source of truth; bump it there before tagging a release.
+source of truth; CMake generates the `version.h` behind the DLL's version
+resource from it.
 
 To set up a build environment from scratch on a fresh Windows installation
 (VM, [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/),
@@ -461,8 +462,12 @@ having to trust GitHub's infrastructure. The signing key fingerprint is
 Releases are built and signed locally; no private key ever leaves the
 developer's machine.
 
-1. On a feature branch, bump `version=` in `src\pluginst.inf` and add a
-   `## [X.Y.Z] – YYYY-MM-DD` entry to `CHANGELOG.md`.
+1. On a feature branch, set `version=X.Y.Z` (dropping the `-devel` suffix)
+   and `release-date=` in `src\pluginst.inf`, and turn the `[Unreleased]`
+   section of `CHANGELOG.md` into `## [vX.Y.Z] – YYYY-MM-DD` (and update the
+   link references at its end), in a final
+   "Bump plugin version to vX.Y.Z" commit. Development after a release
+   continues as `X.Y.Z-devel` of the next version.
 2. Open a PR, get it reviewed, and merge into `main`.
 3. On `main`, tag and push:
    ```
