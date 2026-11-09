@@ -65,6 +65,8 @@ src/
   TCNewPlusTest.cpp   - unit tests + end-to-end tests through the WFX API
   TCNewPlus.def       - DLL exports (the export list IS the feature set, see below)
   TCNewPlus.rc/.ico   - Network Neighborhood plugin icon (first icon resource)
+                        and VERSIONINFO (Plugin Manager reads it)
+  version.h.in        - template of the generated version.h (from pluginst.inf)
   fsplugin.h          - WFX plugin API (subset used here)
   app.manifest        - test EXE manifest (long paths)
   pluginst.inf        - TC auto-installer metadata; canonical version source

@@ -23,6 +23,7 @@
 
 #include "fsplugin.h"
 #include "NameSubstitution.h"
+#include "version.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -346,6 +347,20 @@ static void RunEndToEndTests(const wchar_t* dllPath)
     Check(dll != nullptr, "LoadLibrary on the plugin DLL");
     if (!dll)
         return;
+
+    // The version resource is what Total Commander's Plugin Manager reads.
+    // VS_FIXEDFILEINFO follows the "VS_VERSION_INFO" key at DWORD alignment.
+    {
+        HRSRC res = FindResourceW(dll, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(16)); // RT_VERSION
+        Check(res != nullptr, "plugin DLL has a version resource");
+        const BYTE* data = res ? static_cast<const BYTE*>(LockResource(LoadResource(dll, res))) : nullptr;
+        const VS_FIXEDFILEINFO* info = data ? reinterpret_cast<const VS_FIXEDFILEINFO*>(data + 40) : nullptr;
+        Check(info && info->dwSignature == 0xFEEF04BD, "version resource holds VS_FIXEDFILEINFO");
+        Check(info && HIWORD(info->dwFileVersionMS) == TCNP_VER_MAJOR &&
+                  LOWORD(info->dwFileVersionMS) == TCNP_VER_MINOR &&
+                  HIWORD(info->dwFileVersionLS) == TCNP_VER_PATCH,
+              "file version in the resource is the one in pluginst.inf");
+    }
 
     auto fsInitW      = reinterpret_cast<PFsInitW>(GetProcAddress(dll, "FsInitW"));
     auto fsFindFirstW = reinterpret_cast<PFsFindFirstW>(GetProcAddress(dll, "FsFindFirstW"));

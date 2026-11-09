@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Version resource.** `TCNewPlus.wfx` / `.wfx64` now carries the plugin version, so
+  Windows' file properties and Total Commander's Plugin Manager can tell which
+  version is installed.
 - **Portable and redirected Total Commander installs.** `TCNewPlus.ini` is now
   looked for first in Total Commander's own settings folder, the one holding
   `wincmd.ini`, which Total Commander tells the plugin. In a standard
