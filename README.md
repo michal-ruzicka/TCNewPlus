@@ -222,7 +222,7 @@ apply. To change a setting:
    Options → Plugins → File system plugins → Configure** shows where it is).
 2. Copy it as `TCNewPlus.ini` to the folder of Total Commander's `wincmd.ini`.
    In a standard installation that is `%APPDATA%\GHISLER`; in a portable one,
-   `cd %COMMANDER_INI%\..` in Total Commander's command line takes you there.
+   `cd %COMMANDER_INI%` in Total Commander's command line takes you there.
 3. Edit the copy.
 
 A copy in the plugin's folder is the system-wide default, and is ignored
