@@ -132,7 +132,9 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
 - **Config is re-read on every root listing** (`LoadConfig()` in
   `FsFindFirstW`) — cheap by design; don't cache it globally or INI edits
   stop applying on `Ctrl+R`. Lookup order mirrors TCOfficeView:
-  `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user) wins over
+  the folder of `wincmd.ini` (`DefaultIniName` of `FsSetDefaultParams`; differs
+  from the next one only in a portable or redirected TC), then
+  `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user), which wins over
   `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
   per-key merge. The ZIP ships only `TCNewPlus.sample.ini`: Total Commander's
   installer overwrites what the ZIP carries, so a shipped `.ini` would replace

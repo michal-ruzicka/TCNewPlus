@@ -202,12 +202,17 @@ Meeting Notes 2026-06-13 14.30 by michal.md
 
 ### Configuration
 
-Settings live in `TCNewPlus.ini`. The plugin reads it from two locations
+Settings live in `TCNewPlus.ini`. The plugin looks for it in three locations
 and uses the **first one that exists** — values are not merged across
 files:
 
-1. `%APPDATA%\GHISLER\TCNewPlus.ini` — per-user override
-2. `<plugin install dir>\TCNewPlus.ini` — system-wide default
+1. the folder holding Total Commander's `wincmd.ini`, as Total Commander
+   tells the plugin
+2. `%APPDATA%\GHISLER\TCNewPlus.ini` — per-user override
+3. `<plugin install dir>\TCNewPlus.ini` — system-wide default
+
+In a standard installation the first two are the same file; a portable Total
+Commander keeps its `TCNewPlus.ini` next to its `wincmd.ini`.
 
 The plugin ships only `TCNewPlus.sample.ini`, which is never read and has
 every option commented out; without an INI all defaults apply. To customise

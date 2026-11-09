@@ -233,8 +233,12 @@ static std::wstring ExpandEnvironment(const std::wstring& value)
     return (n > 0 && n <= ARRAYSIZE(buf)) ? std::wstring(buf) : value;
 }
 
-// Per-user configuration override, in Total Commander's own settings folder
-// (%APPDATA%\GHISLER). Empty when %APPDATA% is somehow undefined.
+// Total Commander's own settings folder (where wincmd.ini lives), set by
+// FsSetDefaultParams right after FsInit. Empty when unknown.
+static std::wstring g_tcSettingsDir;
+
+// Per-user configuration override, in Total Commander's default settings
+// folder (%APPDATA%\GHISLER). Empty when %APPDATA% is somehow undefined.
 static std::wstring UserConfigPath()
 {
     wchar_t appdata[MAX_PATH] = L"";
@@ -378,15 +382,22 @@ static Config LoadConfig()
     const std::wstring dir = PluginDirectory();
 
     // Lookup order, mirroring TCOfficeView: the first file that exists is
-    // used in full — settings are NOT merged across the two.
-    //   1. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
-    //   2. <plugin install dir>\TCNewPlus.ini (system-wide)
+    // used in full — settings are NOT merged across them.
+    //   1. <folder of wincmd.ini>\TCNewPlus.ini (TC's own settings folder;
+    //      differs from 2 only in a portable or redirected TC)
+    //   2. %APPDATA%\GHISLER\TCNewPlus.ini   (per-user override)
+    //   3. <plugin install dir>\TCNewPlus.ini (system-wide)
+    const auto exists = [](const std::wstring& path) {
+        return !path.empty() &&
+               GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    };
+    const std::wstring tcIni = g_tcSettingsDir.empty()
+                                   ? std::wstring()
+                                   : g_tcSettingsDir + L"\\TCNewPlus.ini";
     const std::wstring userIni = UserConfigPath();
-    const std::wstring iniPath =
-        (!userIni.empty() &&
-         GetFileAttributesW(userIni.c_str()) != INVALID_FILE_ATTRIBUTES)
-            ? userIni
-            : dir + L"\\TCNewPlus.ini";
+    const std::wstring iniPath = exists(tcIni)     ? tcIni
+                                 : exists(userIni) ? userIni
+                                                   : dir + L"\\TCNewPlus.ini";
     cfg.iniPath   = iniPath;
     cfg.iniExists = GetFileAttributesW(iniPath.c_str()) != INVALID_FILE_ATTRIBUTES;
 
@@ -1196,10 +1207,24 @@ void __stdcall FsGetDefRootName(char* DefRootName, int maxlen)
     lstrcpynA(DefRootName, "TCNewPlus", maxlen);
 }
 
-void __stdcall FsSetDefaultParams(FsDefaultParamStruct* /*dps*/)
+void __stdcall FsSetDefaultParams(FsDefaultParamStruct* dps)
 {
-    // Configuration deliberately lives next to the plugin DLL (TCNewPlus.ini),
-    // not in TC's default INI location — nothing to pick up here.
+    // DefaultIniName names a file shared by all file system plugins; only its
+    // folder is of interest here. A path that is not absolute (never seen
+    // from TC) is ignored rather than resolved against the current directory.
+    g_tcSettingsDir.clear();
+    if (!dps)
+        return;
+    wchar_t buf[MAX_PATH] = L"";
+    int n = MultiByteToWideChar(CP_ACP, 0, dps->DefaultIniName,
+                                static_cast<int>(strnlen(dps->DefaultIniName, MAX_PATH)),
+                                buf, MAX_PATH - 1);
+    const std::wstring path(buf, n > 0 ? n : 0);
+    const bool absolute = path.size() > 2 &&
+                          (path[1] == L':' || (path[0] == L'\\' && path[1] == L'\\'));
+    const size_t slash = path.find_last_of(L'\\');
+    if (absolute && slash != std::wstring::npos)
+        g_tcSettingsDir = path.substr(0, slash);
 }
 
 // ---------------------------------------------------------------------------

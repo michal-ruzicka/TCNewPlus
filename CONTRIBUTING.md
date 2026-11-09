@@ -385,8 +385,9 @@ entry looks the way it does, and in particular to catch a per-user
 `%APPDATA%\GHISLER\TCNewPlus.ini` silently shadowing the plugin-dir INI so an
 edit to the wrong file appears to do nothing.
 
-**Config not taking effect?** `TCNewPlus.ini` is looked up first at
-`%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override) and then next to the
+**Config not taking effect?** `TCNewPlus.ini` is looked up first in
+the folder of Total Commander's `wincmd.ini`, then at
+`%APPDATA%\GHISLER\TCNewPlus.ini` (per-user override) and finally next to the
 plugin DLL (check TC's *Configuration → Options → Plugins → File system
 plugins → Configure* for the installed path); the first file that exists
 wins entirely — keys are not merged. The chosen file is re-read on every

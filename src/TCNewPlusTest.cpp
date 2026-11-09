@@ -744,6 +744,46 @@ static void RunEndToEndTests(const wchar_t* dllPath)
             RemoveDirectoryW(ghislerDir.c_str()); // no-op if not empty
     }
 
+    // --- Total Commander's settings folder over both other locations -------
+    // FsSetDefaultParams names a file in the folder of wincmd.ini (a portable
+    // or redirected TC). Only the folder counts; an INI there wins in full.
+    {
+        typedef void(__stdcall * PFsSetDefaultParams)(FsDefaultParamStruct*);
+        auto fsSetDefaultParams = reinterpret_cast<PFsSetDefaultParams>(
+            GetProcAddress(dll, "FsSetDefaultParams"));
+        Check(fsSetDefaultParams != nullptr, "FsSetDefaultParams is exported");
+
+        std::wstring tcDir = fixture + L"\\TcSettings";
+        std::wstring tcTemplates = fixture + L"\\TcTemplates";
+        CreateDirectoryW(tcDir.c_str(), nullptr);
+        CreateDirectoryW(tcTemplates.c_str(), nullptr);
+        WriteTextFile(tcTemplates + L"\\Only In TC Settings.txt", "tc");
+        std::wstring tcIni = tcDir + L"\\TCNewPlus.ini";
+        WritePrivateProfileStringW(L"Templates", L"TemplatesPath",
+                                   tcTemplates.c_str(), tcIni.c_str());
+
+        FsDefaultParamStruct dps = {};
+        dps.size = sizeof(dps);
+        WideCharToMultiByte(CP_ACP, 0, (tcDir + L"\\fsplugin.ini").c_str(), -1,
+                            dps.DefaultIniName, sizeof(dps.DefaultIniName),
+                            nullptr, nullptr);
+        if (fsSetDefaultParams) {
+            fsSetDefaultParams(&dps);
+            auto tcListing =
+                ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+            Check(ContainsName(tcListing, L"Only In TC Settings.txt"),
+                  "INI next to wincmd.ini takes precedence");
+            Check(!ContainsName(tcListing, L"Plain.txt"),
+                  "plugin-dir INI is ignored when TC's settings folder has one");
+
+            DeleteFileW(tcIni.c_str());
+            auto backListing =
+                ListVirtualDir(fsFindFirstW, fsFindNextW, fsFindClose, L"\\");
+            Check(ContainsName(backListing, L"Plain.txt"),
+                  "without an INI next to wincmd.ini the lookup goes on");
+        }
+    }
+
     FreeLibrary(dll);
 
     // --- Cleanup ------------------------------------------------------------
