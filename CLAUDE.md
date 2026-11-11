@@ -65,10 +65,12 @@ src/
   TCNewPlusTest.cpp   - unit tests + end-to-end tests through the WFX API
   TCNewPlus.def       - DLL exports (the export list IS the feature set, see below)
   TCNewPlus.rc/.ico   - Network Neighborhood plugin icon (first icon resource)
+                        and VERSIONINFO (Plugin Manager reads it)
+  version.h.in        - template of the generated version.h (from pluginst.inf)
   fsplugin.h          - WFX plugin API (subset used here)
   app.manifest        - test EXE manifest (long paths)
   pluginst.inf        - TC auto-installer metadata; canonical version source
-  TCNewPlus.ini       - sample config: [Templates] TemplatesPath;
+  TCNewPlus.sample.ini - sample config, never read: [Templates] TemplatesPath;
                         [FileNames] ReplaceFilenameVariables, HideStartingDigits;
                         [FileContents] ReplaceContentVariables
 build/                - CMake out-of-source build trees (gitignored)
@@ -132,9 +134,15 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
 - **Config is re-read on every root listing** (`LoadConfig()` in
   `FsFindFirstW`) — cheap by design; don't cache it globally or INI edits
   stop applying on `Ctrl+R`. Lookup order mirrors TCOfficeView:
-  `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user) wins over
+  the folder of `wincmd.ini` (`DefaultIniName` of `FsSetDefaultParams`; differs
+  from the next one only in a portable or redirected TC), then
+  `%APPDATA%\GHISLER\TCNewPlus.ini` (per-user), which wins over
   `<plugin dir>\TCNewPlus.ini`; the first existing file is used in full, no
-  per-key merge. The default `TemplatesPath` stays relative to the DLL
+  per-key merge. The ZIP ships only `TCNewPlus.sample.ini`: Total Commander's
+  installer overwrites what the ZIP carries, so a shipped `.ini` would replace
+  the user's settings on every update.
+  The plugin never creates the INI itself: it is optional, the defaults live in
+  the code, and whoever wants one copies the sample where it suits them. The default `TemplatesPath` stays relative to the DLL
   directory regardless of which INI wins (that's where the samples ship).
 - **The templates-folder link** (`[Templates] ShowLinkToTemplatesDir`) is an
   extra root entry added in `EnumerateVirtualDir` (root only). It is tracked
@@ -193,12 +201,15 @@ dist/                 - released TCNewPlus.v<version>.zip files (gitignored)
 
 ## Build prerequisites
 
-- Visual Studio 2026 Build Tools, workload: *Desktop development with C++*.
-- CMake 3.20+.
+- Visual Studio 2026 Build Tools with the components in `.vsconfig` (pinned
+  release: `EXPECTED_VS` in `build.cmd`).
+- CMake comes with them (`VC.CMake.Project`).
 - No .NET SDK. No other toolchain.
 
-Reproducible-build pins (EXPECTED_CL / CMAKE_T / CMAKE_SDK in `build.cmd`,
-components in `.vsconfig`) follow the TCOfficeView scheme — see
+Reproducible-build pins (EXPECTED_VS / EXPECTED_CL / CMAKE_T / CMAKE_SDK in
+`build.cmd`, the Build Tools bootstrapper URL + SHA-256 in the CI workflow and
+`setup-build-environment-example.cmd`, components in `.vsconfig`) follow the
+TCResticBrowser scheme — see
 [CONTRIBUTING.md](CONTRIBUTING.md#reproducible-builds) before touching them.
 
 ## Icons

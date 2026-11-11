@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.2.1] – 2026-11-11
+
+### Added
+
+- **Version resource.** `TCNewPlus.wfx` / `.wfx64` now carries the plugin version, so
+  Windows' file properties and Total Commander's Plugin Manager can tell which
+  version is installed.
+- **Portable and redirected Total Commander installs.** `TCNewPlus.ini` is now
+  looked for first in Total Commander's own settings folder, the one holding
+  `wincmd.ini`, which Total Commander tells the plugin. In a standard
+  installation that is `%APPDATA%\GHISLER` as before, so nothing changes there.
+
+### Changed
+
+- **Updating the plugin no longer overwrites your settings.** The release ZIP
+  now carries `TCNewPlus.sample.ini` instead of `TCNewPlus.ini`, so an update
+  leaves a `TCNewPlus.ini` in the plugin folder alone. To change settings, copy
+  the sample to `TCNewPlus.ini` and edit the copy (see *Configuration* in the
+  README). A `TCNewPlus.ini` left there by an earlier version keeps working.
+
+- **The build is pinned to one Visual Studio release.** CI and
+  `setup-build-environment-example.cmd` now install Build Tools 18.12.0 from
+  its fixed-version bootstrapper, checked by SHA-256, instead of whatever the
+  stable channel offers on the day, and `build.cmd` warns when another release
+  is used. Each build also writes `build\fingerprint-<arch>.txt`, which shows
+  where two builds of one commit differ. Same process as TCResticBrowser.
+
 ## [v1.2.0] – 2026-06-17
 
 ### Added
@@ -130,6 +157,7 @@ First public release.
   clean-room verification builds.
 
 
+[v1.2.1]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.2.0...v1.2.1
 [v1.2.0]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.1.0...v1.2.0
 [v1.1.0]: https://github.com/michal-ruzicka/TCNewPlus/compare/v1.0.0...v1.1.0
 [v1.0.0]: https://github.com/michal-ruzicka/TCNewPlus/releases/tag/v1.0.0

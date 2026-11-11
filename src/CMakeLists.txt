@@ -36,6 +36,24 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
 # ---------------------------------------------------------------------------
+# Version: version= in pluginst.inf is the single source of truth. It is
+# turned into version.h (for the VERSIONINFO resource) at configure time, and
+# CMake re-runs whenever pluginst.inf changes.
+# ---------------------------------------------------------------------------
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS pluginst.inf)
+file(STRINGS pluginst.inf _version_line REGEX "^version=")
+# A pre-release suffix (X.Y.Z-devel between releases) is kept in the product
+# version string; the numeric FILEVERSION carries MAJOR.MINOR.PATCH.0 only.
+if(NOT _version_line MATCHES "^version=(([0-9]+)\\.([0-9]+)\\.([0-9]+)(-[0-9A-Za-z.]+)?)[\r]*$")
+    message(FATAL_ERROR "pluginst.inf: no version=MAJOR.MINOR.PATCH[-suffix] line")
+endif()
+set(TCNP_VERSION "${CMAKE_MATCH_1}")
+set(TCNP_VER_MAJOR ${CMAKE_MATCH_2})
+set(TCNP_VER_MINOR ${CMAKE_MATCH_3})
+set(TCNP_VER_PATCH ${CMAKE_MATCH_4})
+
+# ---------------------------------------------------------------------------
 # Plugin DLL: TCNewPlus.wfx (32-bit) or TCNewPlus.wfx64 (64-bit)
 # ---------------------------------------------------------------------------
 
@@ -43,18 +61,21 @@ add_library(TCNewPlus SHARED
     TCNewPlus.cpp
     NameSubstitution.cpp
     TCNewPlus.def
-    TCNewPlus.rc   # embeds the Network Neighborhood plugin icon
+    TCNewPlus.rc   # Network Neighborhood plugin icon + VERSIONINFO
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set_target_properties(TCNewPlus PROPERTIES
-        SUFFIX ".wfx64"
-        PREFIX "")
+    set(TCNP_SUFFIX ".wfx64")
 else()
-    set_target_properties(TCNewPlus PROPERTIES
-        SUFFIX ".wfx"
-        PREFIX "")
+    set(TCNP_SUFFIX ".wfx")
 endif()
+set_target_properties(TCNewPlus PROPERTIES
+    SUFFIX "${TCNP_SUFFIX}"
+    PREFIX "")
+
+set(TCNP_FILE_NAME "TCNewPlus${TCNP_SUFFIX}")
+configure_file(version.h.in version.h @ONLY)
+target_include_directories(TCNewPlus PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 # ---------------------------------------------------------------------------
 # Test executable: unit tests for the naming rules plus an end-to-end smoke
@@ -67,3 +88,4 @@ add_executable(TCNewPlusTest
     NameSubstitution.cpp
     app.manifest
 )
+target_include_directories(TCNewPlusTest PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
